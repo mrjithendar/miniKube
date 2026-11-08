@@ -79,6 +79,8 @@ data "kubernetes_secret_v1" "gateway_basic_auth" {
 locals {
   edge_values      = yamldecode(file("${local.minikube}/istio/edge/values.yaml"))
   basic_auth_names = [for login in local.edge_values.basicAuth : login.name]
+  # A missing Secret reads as data = null; treat it as empty so the precondition below reports it.
+  gateway_basic_auth = data.kubernetes_secret_v1.gateway_basic_auth.data == null ? {} : data.kubernetes_secret_v1.gateway_basic_auth.data
 }
 
 resource "helm_release" "istio_edge" {
@@ -95,7 +97,7 @@ resource "helm_release" "istio_edge" {
   ]
   set_sensitive = [for name in local.basic_auth_names : {
     name  = "basicAuthUsers.${name}"
-    value = lookup(data.kubernetes_secret_v1.gateway_basic_auth.data, name, "")
+    value = lookup(local.gateway_basic_auth, name, "")
     type  = "string"
   }]
 
@@ -105,7 +107,7 @@ resource "helm_release" "istio_edge" {
   lifecycle {
     precondition {
       condition = alltrue([for name in local.basic_auth_names :
-      lookup(nonsensitive(data.kubernetes_secret_v1.gateway_basic_auth.data), name, "") != ""])
+      nonsensitive(lookup(local.gateway_basic_auth, name, "") != "")])
       error_message = "Secret istio-ingress/gateway-basic-auth lacks a login: run python3 scripts/istio/gateway-basic-auth.py first."
     }
   }

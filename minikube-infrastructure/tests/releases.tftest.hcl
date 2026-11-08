@@ -19,10 +19,11 @@ run "pinned_releases" {
       helm_release.istio_base.version == helm_release.istiod.version &&
       helm_release.istiod.version == "1.30.7" &&
       helm_release.istio_cni.version == helm_release.istiod.version &&
+      helm_release.istio_ingressgateway.version == helm_release.istiod.version &&
       helm_release.kiali.version == "2.34.0" &&
       helm_release.grafana.version == "14.0.1"
     )
-    error_message = "Chart versions are pinned; istio-base, istio-cni and istiod must stay on one version."
+    error_message = "Chart versions are pinned; istio-base, istio-cni, istiod and the ingress gateway must stay on one version."
   }
 
   assert {
@@ -33,6 +34,7 @@ run "pinned_releases" {
       helm_release.letsencrypt.namespace == "cert-manager" &&
       helm_release.istiod.namespace == "istio-system" &&
       helm_release.istio_cni.namespace == "istio-system" &&
+      helm_release.istio_ingressgateway.namespace == "istio-ingress" &&
       helm_release.kiali.namespace == "istio-system" &&
       helm_release.prometheus.namespace == "monitoring" &&
       helm_release.grafana.namespace == "monitoring" &&

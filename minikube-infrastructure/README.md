@@ -10,7 +10,8 @@ only the AppProject `mk-platform` and the opt-in `harbor`.
 | `metrics-server.tf` | `metrics-server` | kubernetes-sigs `metrics-server` 3.14.0 | `kube-system` | `deploy/minikube/metrics-server/values.yaml` |
 | `cert-manager.tf` | `cert-manager` | `oci://quay.io/jetstack/charts/cert-manager` v1.20.4, CRDs included | `cert-manager` | `deploy/minikube/cert-manager/values.yaml` |
 | `letsencrypt.tf` | `letsencrypt-jithendar` | local `deploy/minikube/cert-manager/issuers` | `cert-manager` | ClusterIssuers `letsencrypt-dns`, `letsencrypt-dns-staging` (DNS-01, Cloudflare); Certificate `jithendar/jithendar-com-wildcard` for `jithendar.com` + `*.jithendar.com` |
-| `istio.tf` | `istio-base`, `istiod` | istio-release `base`, `istiod` 1.30.7 | `istio-system` | `deploy/minikube/istio/istiod.yaml` |
+| `istio.tf` | `istio-base`, `istio-cni`, `istiod` | istio-release `base`, `cni`, `istiod` 1.30.7 | `istio-system` | `deploy/minikube/istio/istiod.yaml` |
+| `istio.tf` | `istio-ingressgateway` | istio-release `gateway` 1.30.7 | `istio-ingress` | `deploy/minikube/istio/ingressgateway.yaml`; NodePort 31080 (HTTP) / 31443 (HTTPS), not forwarded from the host |
 | `kiali.tf` | `kiali` | kiali `kiali-server` 2.34.0 | `istio-system` | `deploy/minikube/istio/kiali.yaml`; Secret `kiali-signing-key` |
 | `prometheus.tf` | `prometheus` | local `deploy/minikube/observability/prometheus` | `monitoring` | chart `values.yaml` |
 | `grafana.tf` | `grafana-dashboards`, `grafana` | local `deploy/minikube/observability/grafana/dashboards`; grafana-community `grafana` 14.0.1 | `monitoring` | `deploy/minikube/observability/grafana/values.yaml`; dashboards from `./dashboards` and `../jithendar.com/grafana` |

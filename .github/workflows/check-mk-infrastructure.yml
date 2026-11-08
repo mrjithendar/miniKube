@@ -1,0 +1,70 @@
+name: Check minikube infrastructure
+
+# Runs on GitHub-hosted runners with no cluster or AWS access: this repository is public, so pull request code
+# never gets the mk4 token or the state role (both live in the "mk4" environment, master only).
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'minikube-infrastructure/**'
+      - 'deploy/minikube/cert-manager/**'
+      - 'deploy/minikube/metrics-server/values.yaml'
+      - 'deploy/minikube/istio/**'
+      - 'deploy/minikube/observability/**'
+      - '.github/mk4-terraform-kubeconfig.yaml'
+      - '.github/workflows/*-mk-infrastructure.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+        working-directory: miniKube
+
+    steps:
+      # miniKube and jithendar.com side by side, as on a workstation: grafana.tf reads ../jithendar.com/grafana.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: miniKube
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mrjithendar/jithendar.com
+          ref: master
+          path: jithendar.com
+          persist-credentials: false
+          sparse-checkout: grafana
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+
+      - name: terraform format check
+        run: terraform -chdir=minikube-infrastructure fmt -check -recursive
+
+      - name: terraform init & validate
+        run: |
+          terraform -chdir=minikube-infrastructure init -backend=false -input=false -no-color
+          terraform -chdir=minikube-infrastructure validate -no-color
+
+      # Mock providers only; see minikube-infrastructure/tests.
+      - name: terraform test
+        run: terraform -chdir=minikube-infrastructure test -no-color -var-file=vars/mk4.tfvars
+
+      # Local charts must render. Helm is preinstalled on GitHub's Ubuntu images.
+      - name: helm lint & template (local charts)
+        run: |
+          set -euo pipefail
+          for chart in cert-manager/issuers observability/prometheus observability/loki observability/jaeger \
+                       observability/otel-collector observability/grafana/dashboards; do
+            helm lint "deploy/minikube/$chart"
+            helm template check "deploy/minikube/$chart" > /dev/null
+          done

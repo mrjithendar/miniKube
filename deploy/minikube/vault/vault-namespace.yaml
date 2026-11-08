@@ -1,0 +1,7 @@
+# Reuse the shared jithendar.com TLSStore; reserve /ui and /v1 for Vault.
+apiVersion: v1
+kind: Namespace
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  name: vault

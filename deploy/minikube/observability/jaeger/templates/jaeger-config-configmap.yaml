@@ -1,0 +1,9 @@
+# jaeger.yaml at the chart root, loaded verbatim (not templated).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jaeger-config
+  namespace: observability
+data:
+  config.yaml: |
+    {{- .Files.Get "jaeger.yaml" | nindent 4 }}

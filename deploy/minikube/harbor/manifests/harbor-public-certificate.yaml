@@ -1,0 +1,13 @@
+# TLS for the registry hostname (expose.tls.secret.secretName and caSecretName in ../values.yaml).
+# HTTP-01 needs the DNS A record first: README.md "Prerequisites".
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: harbor-public
+  namespace: harbor
+spec:
+  secretName: harbor-public-tls
+  dnsNames: [registry.jithendar.com]
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer

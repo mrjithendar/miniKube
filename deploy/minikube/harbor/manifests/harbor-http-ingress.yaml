@@ -1,0 +1,22 @@
+# Plain HTTP on the registry hostname only redirects. cert-manager's HTTP-01 solver adds its own, more specific route.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: harbor-http
+  namespace: harbor
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: harbor-harbor-https@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: registry.jithendar.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: harbor-portal
+            port:
+              number: 80

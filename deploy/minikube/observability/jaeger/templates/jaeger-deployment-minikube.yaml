@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: roboshop-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      annotations:
+        # Rolls the pod when jaeger.yaml changes.
+        checksum/config: {{ .Files.Get "jaeger.yaml" | sha256sum }}
+      labels:
+        app: jaeger
+        app.kubernetes.io/part-of: roboshop-ai
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      containers:
+      - name: jaeger
+        image: cr.jaegertracing.io/jaegertracing/jaeger:2.22.0
+        imagePullPolicy: IfNotPresent
+        env: []
+        args:
+        - --config=/etc/jaeger/config.yaml
+        volumeMounts:
+        - name: config
+          mountPath: /etc/jaeger
+          readOnly: true
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 384Mi
+        ports:
+        - containerPort: 16686
+        - containerPort: 4318
+        - containerPort: 8888
+          name: metrics
+        startupProbe:
+          tcpSocket: &id001
+            port: 16686
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 120
+        livenessProbe:
+          tcpSocket: *id001
+          periodSeconds: 20
+          timeoutSeconds: 3
+          failureThreshold: 5
+        readinessProbe:
+          tcpSocket: *id001
+          timeoutSeconds: 3
+      volumes:
+      - name: config
+        configMap:
+          name: jaeger-config
+          items:
+          - key: config.yaml
+            path: config.yaml
+  strategy:
+    type: Recreate

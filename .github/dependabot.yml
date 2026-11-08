@@ -1,0 +1,66 @@
+# Dependabot version updates for the mk4 manifests and workflows. Merging an image bump changes nothing until the
+# Argo CD Application is synced or minikube-infrastructure/ is applied.
+#
+# Minor and patch updates are grouped to keep the PR count down; majors arrive one PR each.
+# Security updates are not grouped and are not held back by the cooldown.
+#
+# Not covered, because Dependabot cannot read them; bump these by hand: Helm chart versions in deploy/minikube/applications/*.yaml,
+# minikube-infrastructure/*.tf, scripts/argocd/ and deploy/minikube/deploy-*.sh, terraform_version in the workflows,
+# and the Vault image (deploy/minikube/vault/values.yaml has no Chart.yaml, and tests/test_vault_chart.py pins it).
+# Host tool versions are in the tools repository (scripts/setup/versions.json).
+
+version: 2
+
+updates:
+  # Images in the Kubernetes manifests. deploy/minikube/observability/jaeger and deploy/minikube/observability/otel-collector are left
+  # out: no Argo CD Application deploys them.
+  - package-ecosystem: docker
+    directories:
+      - /deploy/minikube/ecr-refresh
+      - /deploy/minikube/observability/loki
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "deps(k8s)"
+    groups:
+      images-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # MongoDB feature versions upgrade one step at a time and change the on-disk format.
+      - dependency-name: mongo
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  # Images in the local Prometheus chart values (prometheus, busybox)
+  - package-ecosystem: helm
+    directory: /deploy/minikube/observability/prometheus
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "deps(helm)"
+    groups:
+      helm-minor-patch:
+        update-types: [minor, patch]
+
+  # Actions in .github/workflows (pinned by commit SHA; Dependabot updates the SHA and the comment)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    commit-message:
+      prefix: "deps(ci)"
+    groups:
+      actions:
+        patterns: ["*"]

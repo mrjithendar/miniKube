@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: roboshop-gitops
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  project: mk-observability
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    syncOptions:
+    - FailOnSharedResource=true
+    - PruneLast=true
+    - CreateNamespace=true
+  sources:
+  - repoURL: https://grafana-community.github.io/helm-charts
+    chart: grafana
+    targetRevision: 14.0.1
+    helm:
+      releaseName: grafana
+      valueFiles:
+      - $values/deploy/minikube/observability/grafana/values.yaml
+  - repoURL: https://github.com/mrjithendar/miniKube.git
+    targetRevision: master
+    ref: values
+  - repoURL: https://github.com/mrjithendar/miniKube.git
+    targetRevision: master
+    path: deploy/minikube/observability/grafana/dashboards
+  # ConfigMap grafana-dashboards-jithendar: the jithendar.com dashboards (metrics, logs, traces) are kept with the
+  # site, in that repo's grafana/ folder (public repository, no credentials).
+  - repoURL: https://github.com/mrjithendar/jithendar.com.git
+    targetRevision: master
+    path: grafana

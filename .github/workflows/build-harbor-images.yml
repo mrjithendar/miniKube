@@ -1,0 +1,52 @@
+name: Build Harbor images
+
+# Builds Harbor's arm64 images and pushes them to Docker Hub (deploy/minikube/harbor/deploy-harbor.sh --skip-deploy).
+# They cannot be built on the mk4 server: builds there froze the cluster twice (tools repository: runner/README.md). GitHub's hosted
+# arm64 runner is native arm64 and free for a public repository (miniKube is private: see README.md). Manual only, so pull requests never see the
+# Docker Hub token. Deploy afterwards on the mk4 host with: bash deploy/minikube/harbor/deploy-harbor.sh --skip-build
+#
+# Repository secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (an access token with write access to jithendar/custom-harbour).
+on:
+  workflow_dispatch:
+    inputs:
+      with_trivy:
+        description: Also build the Trivy adapter (trivy-adapter-photon)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-harbor-images
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Log in to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ] || { echo '::error::Set the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets'; exit 1; }
+          printf '%s' "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+
+      - name: Build and push
+        env:
+          WITH_TRIVY: ${{ inputs.with_trivy }}
+        run: |
+          df -h /
+          args=(--skip-deploy)
+          if [ "$WITH_TRIVY" = true ]; then args+=(--with-trivy); fi
+          bash deploy/minikube/harbor/deploy-harbor.sh "${args[@]}"
+
+      - name: Log out
+        if: always()
+        run: docker logout

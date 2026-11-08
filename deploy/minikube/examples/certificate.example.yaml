@@ -1,0 +1,17 @@
+# LEGACY / OPTIONAL EXAMPLE for roboshop-ai; not used by monitoring installers.
+# Grafana and Prometheus use the shared jithendar/jithendar-com certificate via the default TLSStore.
+# Optional: apply only after DNS and the ingress controller are reachable on port 80.
+# This creates a TLS Secret; your site's Ingress must reference this Secret too.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: jithendar-com
+  namespace: jithendar
+spec:
+  secretName: jithendar-com-tls
+  dnsNames:
+    - jithendar.com
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+    group: cert-manager.io

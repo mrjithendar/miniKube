@@ -1,0 +1,30 @@
+# Installed by minikube-infrastructure/letsencrypt.tf (release letsencrypt-jithendar, namespace cert-manager).
+email: jithendardharmapuri@gmail.com
+# Cloudflare API token with Zone:DNS:Edit on jithendar.com, created by hand before the release:
+# kubectl --context mk4 apply -f cloudflare-secrets.yaml (repository root, git-ignored). Same name and key as EKS
+# (deploy/minikube/cert-manager/examples/cloudflare-api-token-secret.yaml.example).
+cloudflare:
+  secretName: cloudflare-api-token
+  secretKey: api-token
+# A wildcard name can only be validated over DNS-01, so every issuer here solves DNS-01 for this zone.
+dnsZones: [jithendar.com]
+# New names: letsencrypt-prod and letsencrypt-staging (HTTP-01 through Traefik) belong to the jithendar.com
+# repository (minikube/45-jithendar-letsencrypt.yaml) and keep issuing its jithendar.com/www certificate.
+issuers:
+  production:
+    name: letsencrypt-dns
+    server: https://acme-v02.api.letsencrypt.org/directory
+    accountSecret: letsencrypt-dns-account-key
+  staging:
+    name: letsencrypt-dns-staging
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    accountSecret: letsencrypt-dns-staging-account-key
+# One certificate for the apex and every subdomain. Traefik serves it only once a TLSStore or Ingress names
+# its Secret (README.md, "Wildcard certificate").
+certificate:
+  enabled: true
+  name: jithendar-com-wildcard
+  namespace: jithendar
+  secretName: jithendar-com-wildcard-tls
+  issuer: letsencrypt-dns
+  dnsNames: [jithendar.com, "*.jithendar.com"]

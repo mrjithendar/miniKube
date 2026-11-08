@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: mk-platform
+  namespace: argocd
+spec:
+  # The add-on namespaces (kube-system, cert-manager, istio-system, monitoring, observability) are left out: Terraform
+  # owns them (minikube-infrastructure/).
+  description: mk4 workloads; Argo CD, Traefik and the Terraform add-ons are managed outside Argo CD
+  sourceRepos:
+  - https://github.com/mrjithendar/roboshop-ai.git
+  - https://github.com/mrjithendar/miniKube.git
+  - https://github.com/mrjithendar/moks.git
+  - https://github.com/mrjithendar/jithendar.com.git
+  - https://charts.jfrog.io
+  destinations:
+  - namespace: roboshop-ai
+    server: https://kubernetes.default.svc
+  - namespace: jithendar
+    server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+  - group: ''
+    kind: Namespace
+  - group: rbac.authorization.k8s.io
+    kind: ClusterRole
+  - group: rbac.authorization.k8s.io
+    kind: ClusterRoleBinding
+  - group: apiextensions.k8s.io
+    kind: CustomResourceDefinition
+  - group: apiregistration.k8s.io
+    kind: APIService
+  - group: admissionregistration.k8s.io
+    kind: MutatingWebhookConfiguration
+  - group: admissionregistration.k8s.io
+    kind: ValidatingWebhookConfiguration
+  namespaceResourceWhitelist:
+  - group: '*'
+    kind: '*'
+  namespaceResourceBlacklist:
+  - group: ''
+    kind: Secret

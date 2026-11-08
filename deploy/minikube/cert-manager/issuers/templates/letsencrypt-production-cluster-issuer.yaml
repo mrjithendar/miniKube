@@ -1,0 +1,20 @@
+{{- with .Values.issuers.production }}
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ .name | quote }}
+spec:
+  acme:
+    email: {{ required "Set an ACME email" $.Values.email | quote }}
+    server: {{ .server | quote }}
+    privateKeySecretRef:
+      name: {{ .accountSecret | quote }}
+    solvers:
+      - selector:
+          dnsZones: {{ toYaml $.Values.dnsZones | nindent 12 }}
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: {{ $.Values.cloudflare.secretName | quote }}
+              key: {{ $.Values.cloudflare.secretKey | quote }}
+{{- end }}

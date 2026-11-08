@@ -1,0 +1,178 @@
+groups:
+  - name: observability
+    rules:
+      - alert: ObservabilityTargetDown
+        expr: up{job=~"loki|alloy|otel-collector|jaeger"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.job }} is not responding; logs or traces may not be collected'
+          runbook_url: 'https://github.com/mrjithendar/miniKube/blob/master/deploy/minikube/observability/README.md#runbooks'
+      # Alloy gives up on a batch after its retries (seen 2026-11-02: Loki answered "Ingester is shutting down").
+      - alert: LogShippingDropped
+        expr: sum(increase(loki_write_dropped_entries_total{job="alloy"}[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Alloy dropped {{ $value | humanize }} log lines in 15 min; they are lost'
+          runbook_url: 'https://github.com/mrjithendar/miniKube/blob/master/deploy/minikube/observability/README.md#runbooks'
+      # One rate() per counter, told apart by `reason`: refused and failed have identical labels, so a single
+      # rate() over both answered "vector cannot contain metrics with the same labelset" and this rule never ran
+      # (seen in Prometheus → Rules on 2026-11-04).
+      - alert: TraceSpansLost
+        expr: >-
+          sum by (job, reason) (
+            label_replace(rate({__name__=~"otelcol_receiver_refused_spans(_total)?", job=~"otel-collector|jaeger"}[10m]), "reason", "refused", "", "")
+            or label_replace(rate({__name__=~"otelcol_receiver_failed_spans(_total)?", job=~"otel-collector|jaeger"}[10m]), "reason", "failed", "", "")
+            or label_replace(rate({__name__=~"otelcol_exporter_send_failed_spans(_total)?", job=~"otel-collector|jaeger"}[10m]), "reason", "send_failed", "", "")
+          ) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.job }} is losing spans ({{ $labels.reason }})'
+          runbook_url: 'https://github.com/mrjithendar/miniKube/blob/master/deploy/minikube/observability/README.md#runbooks'
+      # Jaeger keeps traces in memory; an OOM kill loses all of them.
+      - alert: JaegerMemoryNearLimit
+        expr: max(container_memory_working_set_bytes{namespace="observability", container="jaeger"}) / max(container_spec_memory_limit_bytes{namespace="observability", container="jaeger"} > 0) > 0.9
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Jaeger uses {{ $value | humanizePercentage }} of its memory limit and may be OOM-killed'
+          runbook_url: 'https://github.com/mrjithendar/miniKube/blob/master/deploy/minikube/observability/README.md#runbooks'
+  # Health probes (/api/health) are excluded: they were about half of all requests and diluted both ratios.
+  - name: jithendar-com
+    rules:
+      - alert: JithendarComDown
+        expr: up{job="jithendar-com"} == 0 or absent(up{job="jithendar-com"})
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'jithendar.com pod {{ $labels.instance }} is not answering metrics scrapes'
+          runbook_url: 'https://github.com/mrjithendar/jithendar.com/blob/master/www/docs/OBSERVABILITY.md#site-down'
+      # At least 3 failures in the window, so a single 5xx at night does not page as "100 %".
+      - alert: JithendarComHighErrorRatio
+        expr: |
+          (
+            sum(rate(http_server_requests_total{job="jithendar-com", route!="/api/health", status="5xx"}[5m]))
+              / sum(rate(http_server_requests_total{job="jithendar-com", route!="/api/health"}[5m]))
+          ) > 0.05
+          and sum(increase(http_server_requests_total{job="jithendar-com", route!="/api/health", status="5xx"}[5m])) >= 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $value | humanizePercentage }} of jithendar.com requests fail with 5xx'
+          runbook_url: 'https://github.com/mrjithendar/jithendar.com/blob/master/www/docs/OBSERVABILITY.md#5xx-errors'
+      - alert: JithendarComSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{job="jithendar-com", route!~"other|/api/health"}[10m]))) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'jithendar.com p95 response time is {{ $value | humanizeDuration }}'
+          runbook_url: 'https://github.com/mrjithendar/jithendar.com/blob/master/www/docs/OBSERVABILITY.md#slow-responses'
+  # MOKS's own health: the portal, its agent runs and the dependencies they use. Not the clusters MOKS investigates.
+  - name: moks
+    rules:
+      - alert: MoksMetricsDown
+        expr: up{job="moks"} == 0 or absent(up{job="moks"})
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'MOKS pod {{ $labels.instance }} is not answering metrics scrapes (or no MOKS pod is found)'
+      - alert: MoksApiErrors
+        expr: sum(rate(moks_http_requests_total{job="moks", status=~"5.."}[10m])) / sum(rate(moks_http_requests_total{job="moks"}[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'More than 5% of MOKS API requests fail with 5xx'
+          description: 'Loki: {namespace="moks"} | logfmt | event="http_request" | status=~"5.." gives trace ids to open in Jaeger.'
+      - alert: MoksModelCallsFailing
+        expr: sum by (provider) (rate(moks_llm_requests_total{job="moks", outcome!="ok"}[15m])) / sum by (provider) (rate(moks_llm_requests_total{job="moks"}[15m])) > 0.5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Over half of {{ $labels.provider }} model calls fail; investigations fall back to rule-based reports'
+          description: 'The outcome label is the failure kind (auth, timeout, rate_limited, unavailable, budget, refused, bad_response).'
+      - alert: MoksInvestigationsFailing
+        expr: sum(increase(moks_investigations_total{job="moks", outcome="failed"}[1h])) >= 3 and sum(increase(moks_investigations_total{job="moks", outcome="failed"}[1h])) / sum(increase(moks_investigations_total{job="moks"}[1h])) > 0.3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'More than 30% of MOKS investigations failed in the last hour'
+      - alert: MoksToolCallsFailing
+        expr: sum by (tool) (rate(moks_tool_calls_total{job="moks", outcome!~"ok|invalid_args"}[15m])) / sum by (tool) (rate(moks_tool_calls_total{job="moks"}[15m])) > 0.5 and sum by (tool) (increase(moks_tool_calls_total{job="moks"}[15m])) >= 5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'MOKS tool {{ $labels.tool }} fails more than half the time; check its connector'
+      - alert: MoksJobsWaiting
+        expr: max by (job_class) (moks_jobs_oldest_age_seconds{job="moks"}) > 900
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'A due {{ $labels.job_class }} job has waited over 15 minutes; check the moks-worker pod'
+  # Copied from moks deploy/grafana/moks-alerts.yaml.
+  - name: moks-durability
+    rules:
+      - alert: MoksBackupOverdue
+        expr: time() - moks_backup_last_success_timestamp_seconds > 10800
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: No successful MOKS backup for over 3 hours
+      - alert: MoksBackupFailed
+        expr: moks_backup_last_run_success == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: The latest MOKS backup run failed
+      - alert: MoksDatabaseVolumeFilling
+        expr: moks_database_size_bytes / moks_database_volume_bytes > 0.7
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: The MOKS database has used over 70% of its volume
+  - name: moks-search
+    rules:
+      - alert: MoksSearchDown
+        expr: moks_search_backend{metric="up"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: The MOKS worker cannot reach the search cluster; search falls back to PostgreSQL
+      - alert: MoksSearchWriteBlocked
+        expr: moks_search_backend{metric="read_only"} == 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: OpenSearch has blocked writes (usually the shared disk's flood-stage watermark)
+      - alert: MoksIndexDeadLetters
+        expr: moks_search_backend{metric="outbox_dead"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: MOKS index changes gave up after all retries; retry from Knowledge after fixing the cause
+      - alert: MoksRetrievalFallingBack
+        expr: sum by (reason) (rate(moks_retrieval_fallbacks_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Knowledge searches are answered with less than was asked for: {{ $labels.reason }}'

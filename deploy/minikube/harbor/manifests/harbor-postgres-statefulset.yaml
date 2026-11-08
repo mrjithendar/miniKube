@@ -1,0 +1,69 @@
+# Harbor's database (database.type external in ../values.yaml). Harbor core creates and migrates its schema in
+# the "registry" database on start. The official image is multi-arch; Harbor's own harbor-db image is PostgreSQL 18 too.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: harbor-postgres
+  namespace: harbor
+  labels:
+    app.kubernetes.io/name: harbor-postgres
+    app.kubernetes.io/part-of: harbor
+  annotations:
+    argocd.argoproj.io/sync-wave: '-1'
+spec:
+  serviceName: harbor-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: harbor-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: harbor-postgres
+        app.kubernetes.io/part-of: harbor
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: mk4-m05
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      containers:
+      - name: postgres
+        image: postgres:18.6-alpine
+        ports:
+        - name: postgres
+          containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          value: harbor
+        - name: POSTGRES_DB
+          value: registry
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef: {name: harbor-credentials, key: password}
+        readinessProbe:
+          exec:
+            command: [pg_isready, -U, harbor, -d, registry]
+          periodSeconds: 10
+        livenessProbe:
+          exec:
+            command: [pg_isready, -U, harbor, -d, registry]
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          failureThreshold: 6
+        resources:
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {cpu: '1', memory: 1Gi}
+        volumeMounts:
+        # PostgreSQL 18 images keep PGDATA at /var/lib/postgresql/18/docker under this mount.
+        - name: data
+          mountPath: /var/lib/postgresql
+        - name: shm
+          mountPath: /dev/shm
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: harbor-postgres-data
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 128Mi

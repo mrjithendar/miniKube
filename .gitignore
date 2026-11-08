@@ -1,0 +1,24 @@
+# Local tooling state (same rules as roboshop-ai): never commit caches, plans or secrets.
+.DS_Store
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.venv/
+node_modules/
+.pytest_cache/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+*.log
+artifacts/
+.secrets
+
+cloudflare-secrets.yaml
+
+# Filled-in Secrets for deploy/; templates stay in deploy/*/examples as *.yaml.example.
+**/**/*-secret.yaml
+**/**/*-secrets.yaml

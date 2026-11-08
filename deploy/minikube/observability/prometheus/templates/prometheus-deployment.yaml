@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: roboshop-prometheus}
+  template:
+    metadata:
+      labels: {app: roboshop-prometheus}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.kubernetesMetrics.enabled }}
+      serviceAccountName: prometheus
+      automountServiceAccountToken: true
+      {{- else }}
+      automountServiceAccountToken: false
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+      {{- if .Values.volumePermissions.enabled }}
+      # Repair only the mounted data PVC before the non-root server starts.
+      # Existing TSDB files are retained; no host filesystem is mounted here.
+      initContainers:
+        - name: data-permissions
+          image: {{ .Values.volumePermissions.image | quote }}
+          command:
+            - sh
+            - -ec
+            - |
+              chown -R 65534:65534 /prometheus-data
+              chmod -R u+rwX /prometheus-data
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, FOWNER, DAC_OVERRIDE]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          volumeMounts:
+            - {name: data, mountPath: /prometheus-data}
+      {{- end }}
+      containers:
+        - name: prometheus
+          image: {{ .Values.image | quote }}
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus-data
+            - --storage.tsdb.retention.time={{ .Values.retentionTime }}
+            - --storage.tsdb.retention.size={{ .Values.retentionSize }}
+            - --web.external-url=https://jithendar.com/prometheus/
+            - --web.route-prefix=/prometheus
+            {{- if .Values.remoteWrite.enabled }}
+            - --web.enable-remote-write-receiver
+            {{- end }}
+          ports: [{name: http, containerPort: 9090}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          startupProbe:
+            httpGet: {path: /prometheus/-/ready, port: http}
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            httpGet: {path: /prometheus/-/ready, port: http}
+          livenessProbe:
+            httpGet: {path: /prometheus/-/healthy, port: http}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 768Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus, readOnly: true}
+            - {name: data, mountPath: /prometheus-data}
+      volumes:
+        - name: config
+          configMap: {name: prometheus-config}
+        - name: data
+          persistentVolumeClaim: {claimName: prometheus-data}

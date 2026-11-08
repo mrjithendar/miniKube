@@ -1,0 +1,12 @@
+# Grafana folder Jithendar.com: the JSON files of the jithendar.com repository's grafana/ folder, passed in as values
+# by minikube-infrastructure/grafana.tf.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-jithendar
+  namespace: monitoring
+data:
+  {{- range $file, $json := .Values.jithendar }}
+  {{ $file }}: |-
+    {{- $json | nindent 4 }}
+  {{- end }}

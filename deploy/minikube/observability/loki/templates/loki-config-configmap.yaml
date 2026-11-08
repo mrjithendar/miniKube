@@ -1,0 +1,9 @@
+# loki.yaml at the chart root, loaded verbatim (not templated).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+  namespace: monitoring
+data:
+  loki.yaml: |
+    {{- .Files.Get "loki.yaml" | nindent 4 }}

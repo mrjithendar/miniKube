@@ -1,0 +1,259 @@
+# Harbor on mk4: official chart harbor/harbor 1.19.4 (Harbor v2.15.4), pinned in ../applications/optional/harbor.yaml.
+# Every key below was checked against that chart version's values.yaml and templates. README.md explains the choices.
+#
+# Settings this repository did not already establish, and so are deployment prerequisites (README.md "Prerequisites"):
+# - the registry hostname (DNS A record) and the private Docker Hub repository holding the arm64 Harbor images;
+# - the node that holds Harbor's volumes (nodeSelector below);
+# - the Secret harbor/harbor-credentials (./create-secrets.sh --services harbor --apply).
+#
+# To change the hostname, change externalURL and expose.ingress.hosts.core here, and the hostnames in
+# manifests/harbor-public-certificate.yaml, manifests/harbor-http-ingress.yaml and manifests/harbor-shortcut-middleware.yaml.
+
+externalURL: https://registry.jithendar.com
+
+expose:
+  type: ingress
+  tls:
+    enabled: true
+    # cert-manager issues it: manifests/harbor-public-certificate.yaml.
+    certSource: secret
+    secret:
+      secretName: harbor-public-tls
+  ingress:
+    hosts:
+      core: registry.jithendar.com
+    className: traefik
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+      traefik.ingress.kubernetes.io/router.tls: 'true'
+      # The chart's defaults are for ingress-nginx; Traefik has no body-size limit to lift.
+      ingress.kubernetes.io/ssl-redirect: null
+      ingress.kubernetes.io/proxy-body-size: null
+      nginx.ingress.kubernetes.io/ssl-redirect: null
+      nginx.ingress.kubernetes.io/proxy-body-size: null
+
+# Backs the portal's "download registry certificate" link. Without it, certSource secret renders the core
+# Deployment's ca-download volume with no source, which the API server rejects.
+caSecretName: harbor-public-tls
+
+# Official goharbor images are amd64-only and every mk4 node is arm64. deploy-harbor.sh builds these from the
+# v2.15.4 source and pushes them to the private Docker Hub repository jithendar/custom-harbour, one tag per
+# component (<component>-v2.15.4). Docker Hub stays reachable when Harbor is not (bootstrap, rebuilds).
+# deploy-harbor.sh creates dockerhub-pull from your Docker Hub user and access token.
+imagePullSecrets:
+- name: dockerhub-pull
+
+# Harbor has no multi-node mode here: one replica of everything, on the node that holds the volumes.
+updateStrategy:
+  type: Recreate
+
+persistence:
+  enabled: true
+  resourcePolicy: keep
+  persistentVolumeClaim:
+    registry:
+      storageClass: standard
+      accessMode: ReadWriteOnce
+      # minikube-hostpath does not enforce sizes: blobs share the host disk with every node, volume and image.
+      # That disk had 43 GiB free on 2026-11-06 (README.md "Footprint"); retention and GC keep this bounded.
+      size: 30Gi
+      annotations:
+        argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  imageChartStorage:
+    type: filesystem
+    # Filesystem storage has no redirects to disable; blobs are served by the registry itself.
+    disableredirect: false
+    filesystem:
+      rootdirectory: /storage
+
+# Credentials come from harbor/harbor-credentials (create_secrets.py). Argo CD renders the chart without cluster
+# access, so any value the chart would otherwise generate (randAlphaNum, genCA) would change on every sync.
+existingSecretAdminPassword: harbor-credentials
+existingSecretAdminPasswordKey: HARBOR_ADMIN_PASSWORD
+existingSecretSecretKey: harbor-credentials
+
+internalTLS:
+  enabled: false
+
+ipFamily:
+  ipv6:
+    enabled: false
+
+# Database and Redis run beside the chart (manifests/harbor-postgres-*, manifests/harbor-redis-*). The chart's
+# internal database takes its password only from values, and its internal Redis has no password; neither can be
+# kept out of Git, and NetworkPolicy enforcement on mk4's kindnet is unproven.
+database:
+  type: external
+  external:
+    host: harbor-postgres
+    port: '5432'
+    username: harbor
+    coreDatabase: registry
+    # Key "password".
+    existingSecret: harbor-credentials
+    sslmode: disable
+  maxIdleConns: 20
+  maxOpenConns: 50
+
+redis:
+  type: external
+  external:
+    addr: harbor-redis:6379
+    coreDatabaseIndex: '0'
+    jobserviceDatabaseIndex: '1'
+    registryDatabaseIndex: '2'
+    trivyAdapterIndex: '5'
+    # Not existingSecret: the chart reads that with Helm lookup, which returns nothing under Argo CD and leaves
+    # the password out of every URL. Each component instead gets REDIS_PASSWORD from harbor-credentials and the
+    # URLs below are rebuilt with it ($(VAR) expansion; env takes precedence over the chart's envFrom ConfigMaps).
+    password: ''
+
+portal:
+  image:
+    repository: docker.io/jithendar/custom-harbour
+    tag: harbor-portal-v2.15.4
+  replicas: 1
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+  nodeSelector:
+    kubernetes.io/hostname: mk4-m05
+
+core:
+  image:
+    repository: docker.io/jithendar/custom-harbour
+    tag: harbor-core-v2.15.4
+  replicas: 1
+  # Key "secret".
+  existingSecret: harbor-credentials
+  existingXsrfSecret: harbor-credentials
+  existingXsrfSecretKey: CSRF_KEY
+  # Token-signing key pair, from cert-manager: manifests/harbor-token-certificate.yaml.
+  secretName: harbor-token-tls
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: '1', memory: 512Mi}
+  nodeSelector:
+    kubernetes.io/hostname: mk4-m05
+  extraEnvVars:
+  - name: REDIS_PASSWORD
+    valueFrom:
+      secretKeyRef: {name: harbor-credentials, key: REDIS_PASSWORD}
+  - name: _REDIS_URL_CORE
+    value: redis://:$(REDIS_PASSWORD)@harbor-redis:6379/0?idle_timeout_seconds=30
+  - name: _REDIS_URL_REG
+    value: redis://:$(REDIS_PASSWORD)@harbor-redis:6379/2?idle_timeout_seconds=30
+
+jobservice:
+  image:
+    repository: docker.io/jithendar/custom-harbour
+    tag: harbor-jobservice-v2.15.4
+  replicas: 1
+  maxJobWorkers: 4
+  # Job logs in PostgreSQL instead of a second PVC; they are swept after loggerSweeperDuration days.
+  jobLoggers:
+  - database
+  loggerSweeperDuration: 14
+  existingSecret: harbor-credentials
+  existingSecretKey: JOBSERVICE_SECRET
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  nodeSelector:
+    kubernetes.io/hostname: mk4-m05
+  extraEnvVars:
+  - name: REDIS_PASSWORD
+    valueFrom:
+      secretKeyRef: {name: harbor-credentials, key: REDIS_PASSWORD}
+  - name: _REDIS_URL_CORE
+    value: redis://:$(REDIS_PASSWORD)@harbor-redis:6379/0?idle_timeout_seconds=30
+  # Overrides redis_pool.redis_url in the chart's config.yml (src/jobservice/config/config.go: loadEnvs).
+  - name: JOB_SERVICE_POOL_REDIS_URL
+    value: redis://:$(REDIS_PASSWORD)@harbor-redis:6379/1
+
+registry:
+  replicas: 1
+  # minikube's hostpath volumes are root-owned and ignore the chart's fsGroup 10000, so the registry could not
+  # write /storage. Hand the volume over once, as root with only CAP_CHOWN (busybox: also used in README.md).
+  initContainers:
+  - name: chown-storage
+    image: busybox:1.37
+    command: [chown, '10000:10000', /storage]
+    securityContext:
+      runAsUser: 0
+      runAsNonRoot: false
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+        add: [CHOWN]
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {cpu: 100m, memory: 32Mi}
+    volumeMounts:
+    - name: registry-data
+      mountPath: /storage
+  # Key REGISTRY_HTTP_SECRET.
+  existingSecret: harbor-credentials
+  existingSecretKey: REGISTRY_HTTP_SECRET
+  credentials:
+    username: harbor_registry_user
+    # Keys REGISTRY_PASSWD and REGISTRY_HTPASSWD.
+    existingSecret: harbor-credentials
+  relativeurls: false
+  upload_purging:
+    enabled: true
+    age: 168h
+    interval: 24h
+    dryrun: false
+  registry:
+    image:
+      repository: docker.io/jithendar/custom-harbour
+      tag: registry-photon-v2.15.4
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: '1', memory: 1Gi}
+    extraEnvVars:
+    # Overrides redis.password in config.yml (distribution's REGISTRY_* environment overrides).
+    - name: REGISTRY_REDIS_PASSWORD
+      valueFrom:
+        secretKeyRef: {name: harbor-credentials, key: REDIS_PASSWORD}
+  controller:
+    image:
+      repository: docker.io/jithendar/custom-harbour
+      tag: harbor-registryctl-v2.15.4
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {cpu: 500m, memory: 256Mi}
+    extraEnvVars:
+    # Garbage collection runs here and reads the registry's config.yml, Redis section included.
+    - name: REGISTRY_REDIS_PASSWORD
+      valueFrom:
+        secretKeyRef: {name: harbor-credentials, key: REDIS_PASSWORD}
+  nodeSelector:
+    kubernetes.io/hostname: mk4-m05
+
+# Off by default to save memory (about 1 GiB with its vulnerability database). See README.md "Trivy".
+trivy:
+  enabled: false
+  image:
+    repository: docker.io/jithendar/custom-harbour
+    tag: trivy-adapter-photon-v2.15.4
+  replicas: 1
+  skipUpdate: false
+  resources:
+    requests: {cpu: 200m, memory: 512Mi}
+    limits: {cpu: '1', memory: 1Gi}
+  nodeSelector:
+    kubernetes.io/hostname: mk4-m05
+
+# The exporter image hard-codes GOARCH=amd64 (make/photon/exporter/Dockerfile), so it cannot run here.
+metrics:
+  enabled: false
+
+nginx:
+  # Only used when expose.type is clusterIP/nodePort/loadBalancer; the Traefik Ingress replaces it.
+  replicas: 0
+
+cache:
+  enabled: false

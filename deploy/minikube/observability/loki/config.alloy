@@ -1,0 +1,112 @@
+// One collector uses the API: no privileged host mounts or per-node agents.
+discovery.kubernetes "pods" {
+  role = "pod"   // every namespace, through ClusterRole alloy-logs
+}
+discovery.relabel "logs" {
+  targets = discovery.kubernetes.pods.targets
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label = "namespace"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label = "pod"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label = "container"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label = "service_name"
+  }
+}
+loki.source.kubernetes "logs" {
+  targets = discovery.relabel.logs.output
+  forward_to = [loki.process.safe.receiver]
+}
+// Preserve the collection boundary: no raw user data, headers, URLs, prompts,
+// free-text messages or exception text are forwarded. Services log JSON with an
+// allowlisted field set; here each field is copied only when its value matches a
+// strict pattern, so anything unexpected is dropped rather than stored.
+// Trace IDs remain in the line, not labels.
+loki.process "safe" {
+  stage.regex {
+    expression = `(?i)"(?:level|log.level)"\s*:\s*"(?P<level>trace|debug|info|warn|warning|error|fatal)"`
+  }
+  stage.regex {
+    expression = `"event"\s*:\s*"(?P<event>[A-Za-z][A-Za-z0-9_.:/-]{0,119})"`
+  }
+  stage.regex {
+    expression = `"(?:traceId|trace_id)"\s*:\s*"(?P<trace_id>[a-fA-F0-9]{32})"`
+  }
+  // Non-JSON lines leave these unset and still become event=application_log.
+  stage.json {
+    expressions = {
+      raw_route = "route", raw_method = "method", raw_status = "status", raw_duration = "durationMs",
+      raw_dependency = "dependency", raw_operation = "operation", raw_error_type = "errorType",
+      raw_error_code = "errorCode", raw_outcome = "outcome", raw_logger = "logger_name",
+    }
+  }
+  // Routes may be Next.js patterns (/blog/[slug], /api/auth/[...all]); outcome values come from MOKS
+  // (success/failure) and jithendar.com (success/redirect/client_error/server_error/error).
+  stage.regex {
+    source     = "raw_route"
+    expression = `^(?P<route>/[A-Za-z0-9_./{}:\[\]-]{0,150})$`
+  }
+  stage.regex {
+    source     = "raw_method"
+    expression = `^(?P<method>[A-Z]{3,7})$`
+  }
+  stage.regex {
+    source     = "raw_status"
+    expression = `^(?P<status>[1-5][0-9]{2})$`
+  }
+  stage.regex {
+    source     = "raw_duration"
+    expression = `^(?P<duration_ms>[0-9]{1,9})(?:\.[0-9]+)?$`
+  }
+  stage.regex {
+    source     = "raw_dependency"
+    expression = `^(?P<dependency>[A-Za-z0-9_.:-]{1,80})$`
+  }
+  stage.regex {
+    source     = "raw_operation"
+    expression = `^(?P<operation>[A-Za-z0-9_./{}:-]{1,120})$`
+  }
+  stage.regex {
+    source     = "raw_error_type"
+    expression = `^(?P<error_type>[A-Za-z0-9_.$]{1,80})$`
+  }
+  stage.regex {
+    source     = "raw_error_code"
+    expression = `^(?P<error_code>[A-Za-z0-9_.]{1,80})$`
+  }
+  stage.regex {
+    source     = "raw_outcome"
+    expression = `^(?P<outcome>success|failure|error|redirect|client_error|server_error)$`
+  }
+  stage.regex {
+    source     = "raw_logger"
+    expression = `^(?P<logger>[A-Za-z0-9_.$]{1,160})$`
+  }
+  // Low-cardinality level label (info/warn/error/...) for fast filtering.
+  stage.template {
+    source   = "level_label"
+    template = `{{ if .level }}{{ $l := ToLower .level }}{{ if eq $l "warning" }}warn{{ else }}{{ $l }}{{ end }}{{ else }}unknown{{ end }}`
+  }
+  stage.labels {
+    values = { level = "level_label" }
+  }
+  stage.template {
+    source   = "safe_line"
+    template = `event={{ if .event }}{{ .event }}{{ else }}application_log{{ end }} level={{ .level_label }}{{ with .route }} route={{ . }}{{ end }}{{ with .method }} method={{ . }}{{ end }}{{ with .status }} status={{ . }}{{ end }}{{ with .duration_ms }} duration_ms={{ . }}{{ end }}{{ with .operation }} operation={{ . }}{{ end }}{{ with .dependency }} dependency={{ . }}{{ end }}{{ with .outcome }} outcome={{ . }}{{ end }}{{ with .error_type }} error_type={{ . }}{{ end }}{{ with .error_code }} error_code={{ . }}{{ end }}{{ with .logger }} logger={{ . }}{{ end }} trace_id={{ if .trace_id }}{{ .trace_id }}{{ else }}none{{ end }}`
+  }
+  stage.output { source = "safe_line" }
+  forward_to = [loki.write.local.receiver]
+}
+loki.write "local" {
+  // The loki.write WAL is experimental and refuses to start at the default stability
+  // level. Read positions persist under --storage.path on the alloy-data PVC.
+  endpoint { url = "http://loki.monitoring.svc:3100/loki/api/v1/push" }
+}

@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- vault-namespace.yaml
+- vault-shortcut-middleware.yaml
+- vault-https-middleware.yaml
+- vault-ingress.yaml
+- vault-shortcut-ingress.yaml
+- vault-http-ingress.yaml

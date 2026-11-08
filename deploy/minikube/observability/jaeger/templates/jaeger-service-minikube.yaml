@@ -1,0 +1,21 @@
+# Minikube sandbox deployment; apply with ./scripts/deploy/deploy-minikube.sh.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: roboshop-ai
+spec:
+  selector:
+    app: jaeger
+  ports:
+  - name: p16686
+    port: 16686
+    targetPort: 16686
+  - name: p4318
+    port: 4318
+    targetPort: 4318
+  - name: metrics
+    port: 8888
+    targetPort: 8888

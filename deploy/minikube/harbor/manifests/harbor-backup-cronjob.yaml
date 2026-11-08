@@ -1,0 +1,106 @@
+# Off-host backup to Cloudflare R2: README.md "Backup and restore". Suspended until harbor/harbor-backup-r2 exists;
+# set suspend: false in Git to enable it.
+# The database is dumped before the blobs are copied, and blobs are only ever added in R2 (rclone copy, never sync),
+# so every dump has all the blobs it references. Keep garbage collection out of this window (README.md).
+# harbor-credentials is not uploaded: it is backed up separately, by hand, so one leak does not expose both.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: harbor-backup
+  namespace: harbor
+  labels:
+    app.kubernetes.io/name: harbor-backup
+    app.kubernetes.io/part-of: harbor
+spec:
+  schedule: '30 2 * * *'
+  timeZone: Etc/UTC
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 21600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: harbor-backup
+            app.kubernetes.io/part-of: harbor
+        spec:
+          restartPolicy: Never
+          # The registry volume is a hostPath on this node; ReadWriteOnce allows a second pod on the same node.
+          nodeSelector:
+            kubernetes.io/hostname: mk4-m05
+          automountServiceAccountToken: false
+          initContainers:
+          - name: dump
+            image: postgres:18.6-alpine
+            command: [sh, -c]
+            args:
+            - pg_dump -h harbor-postgres -U harbor -d registry -Fc -f /work/registry.dump && pg_restore -l /work/registry.dump >/dev/null
+            env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: {name: harbor-credentials, key: password}
+            resources:
+              requests: {cpu: 50m, memory: 64Mi}
+              limits: {cpu: 500m, memory: 256Mi}
+            volumeMounts:
+            - name: work
+              mountPath: /work
+          containers:
+          - name: upload
+            image: rclone/rclone:1.75.2
+            command: [sh, -c]
+            args:
+            - |
+              set -eu
+              stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+              dest="r2:$R2_BUCKET/$R2_PREFIX"
+              rclone copyto /work/registry.dump "$dest/postgres/registry-$stamp.dump"
+              rclone copy /storage/docker "$dest/registry/docker" --transfers 4 --checkers 8 --stats-one-line --stats 60s
+              # Written last: names the newest dump whose blobs are all in R2.
+              echo "registry-$stamp.dump" | rclone rcat "$dest/LATEST"
+              echo "backup $stamp complete"
+            env:
+            - name: R2_PREFIX
+              value: backups/harbor
+            - name: R2_BUCKET
+              valueFrom:
+                secretKeyRef: {name: harbor-backup-r2, key: bucket}
+            - name: RCLONE_CONFIG_R2_TYPE
+              value: s3
+            - name: RCLONE_CONFIG_R2_PROVIDER
+              value: Cloudflare
+            - name: RCLONE_CONFIG_R2_REGION
+              value: auto
+            - name: RCLONE_CONFIG_R2_NO_CHECK_BUCKET
+              value: 'true'
+            - name: RCLONE_CONFIG_R2_ENDPOINT
+              valueFrom:
+                secretKeyRef: {name: harbor-backup-r2, key: endpoint}
+            - name: RCLONE_CONFIG_R2_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef: {name: harbor-backup-r2, key: access-key-id}
+            - name: RCLONE_CONFIG_R2_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef: {name: harbor-backup-r2, key: secret-access-key}
+            resources:
+              requests: {cpu: 100m, memory: 128Mi}
+              limits: {cpu: '1', memory: 512Mi}
+            volumeMounts:
+            - name: work
+              mountPath: /work
+              readOnly: true
+            - name: registry-data
+              mountPath: /storage
+              readOnly: true
+          volumes:
+          - name: work
+            emptyDir:
+              sizeLimit: 2Gi
+          - name: registry-data
+            persistentVolumeClaim:
+              claimName: harbor-registry
+              readOnly: true

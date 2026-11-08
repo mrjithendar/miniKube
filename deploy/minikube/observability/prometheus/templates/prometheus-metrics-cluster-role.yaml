@@ -1,0 +1,19 @@
+{{- if .Values.kubernetesMetrics.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Namespace }}-prometheus-metrics
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [nodes/proxy]
+    verbs: [get]
+  {{- if .Values.istioMetrics.enabled }}
+  # Pod discovery for the Istio sidecars (job envoy-stats): Kiali draws the mesh graph from their metrics.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  {{- end }}
+{{- end }}

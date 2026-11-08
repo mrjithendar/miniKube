@@ -1,0 +1,95 @@
+# Loki + Grafana Alloy
+
+Promtail reached end of life on March 2, 2026;
+[Grafana recommends Alloy](https://grafana.com/docs/alloy/latest/set-up/migrate/from-promtail/).
+Pinned versions: Loki 3.7.9 and Alloy 1.21.2.
+
+## Deploy
+
+Loki and Alloy are the Terraform Helm release `loki` (local chart: manifests in `templates/`,
+`loki.yaml` and `config.alloy` loaded verbatim into ConfigMaps):
+
+```bash
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars
+```
+
+Grafana is its own release (`grafana`). Open **https://jithendar.com/grafana/** → Explore →
+**Loki** and query any namespace, for example `{namespace="traefik"}`. A new namespace
+is collected without any change here.
+No new password is needed; use your existing Grafana login. Loki has no built-in
+authentication. Trusted cluster workloads can reach it directly; the only public
+routes are the read and push ones below, so don't expose port 3100 or the rest of `/loki`.
+API collection uses a ClusterRole limited to pods and pods/log in every namespace,
+not Secrets or cluster-admin.
+
+## Remote read (MOKS on EKS)
+
+The `roboshop-demo` cluster cannot reach this Service, so Traefik publishes four read
+endpoints on `https://jithendar.com`, behind their own login `loki-read-auth`:
+`query_range`, `labels`, `label/...` and `format_query` under `/loki/api/v1/`. `delete`,
+`tail` and bare `/loki` are not routed, and `push` needs the separate login below. EKS never holds `monitoring-auth`.
+
+Create the Secrets before applying:
+
+```bash
+PASS=$(openssl rand -hex 32)
+kubectl --context mk4 -n monitoring create secret generic loki-read-auth \
+  --type=kubernetes.io/basic-auth --from-literal=username=moks --from-literal=password="$PASS"
+kubectl --context roboshop-demo -n moks patch secret moks-secrets --type merge \
+  -p "{\"stringData\":{\"MOKS_CRED_LOKI_PASSWORD\":\"$PASS\"}}"
+unset PASS
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars
+```
+
+Check from anywhere; both must fail without the login, and the second even with it:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://jithendar.com/loki/api/v1/labels   # 401
+curl -s -o /dev/null -w '%{http_code}\n' -u moks:PASSWORD -X POST https://jithendar.com/loki/api/v1/push   # not 2xx
+```
+
+The route depends on the `jithendar.com` apex pointing at mk4, so it stops when the apex
+moves to the NLB.
+
+## Remote push (logs from EKS)
+
+Nothing outside mk4 can reach this Service, so Alloy on `roboshop-demo`
+(`deploy/eks/manifests/alloy` in the tools repository) pushes to `https://jithendar.com/loki/api/v1/push`, behind
+its own login `loki-push-auth`. That login reaches only `push`, and it cannot read logs.
+The steps are in [`deploy/eks/DEPLOY.md`](https://github.com/mrjithendar/tools/blob/master/deploy/eks/DEPLOY.md#2-install-the-add-ons) in the tools repository.
+
+EKS streams have `cluster="roboshop-demo"`; mk4's own streams have no `cluster` label. Both
+share the 7-day retention, the 10Gi PVC and the 4 MB/s ingestion limit. The pipeline in
+`deploy/eks/manifests/alloy/alloy-config-configmap.yaml` must stay equal to `config.alloy`
+apart from `loki.write`; the tools repository's `tests/test_loki.py` enforces it. The route stops when the apex
+moves to the NLB, so move Loki first.
+
+## Resource and data boundaries
+
+- Loki: one pod, 256Mi request / 1Gi limit, 10Gi PVC, seven-day retention.
+- Alloy: one pod, 128Mi request / 384Mi limit, 1Gi PVC for read positions. Prometheus scrapes Loki and Alloy.
+- Existing Grafana/Prometheus remain. This is a single-host lab, not HA.
+- Minikube hostPath volume capacity may not enforce a quota. Monitor host free disk.
+- Alloy tails Kubernetes API streams, reducing host privileges at the cost of API
+  and kubelet traffic. One replica avoids duplicate collectors. Reconnect/restarts
+  can replay or miss logs outside the container log retention window; not exactly-once.
+- Only cluster/namespace/pod/container/service labels are indexed. Trace IDs stay in lines.
+- Raw messages, user data, prompts, headers, URLs and
+  stack traces are discarded. Stored lines contain safe event/level/trace fields;
+  unsupported plaintext becomes `application_log` rather than leaking raw content.
+- Source Kubernetes timestamps are preserved. Local Loki/Alloy transport is HTTP within the
+  trusted lab; use authenticated TLS and enforcing network isolation for production.
+
+## Verify
+
+```bash
+kubectl --context=mk4 -n monitoring get pods,pvc
+kubectl --context=mk4 -n monitoring logs deployment/alloy --tail=60
+kubectl --context=mk4 -n monitoring logs deployment/loki --tail=60
+python3 -m pytest -q tests/test_loki.py tests/test_argocd_catalog.py
+helm template loki deploy/minikube/observability/loki -n monitoring > /tmp/roboshop-loki.yaml
+```
+
+Terraform applies the local checkout. No automatic replacement of the live
+stack occurs just by editing these files; run the apply. Persistent credentials from the old stack
+are no longer generated by `create-secrets.sh`.

@@ -1,0 +1,50 @@
+fullnameOverride: traefik
+deployment:
+  replicas: 1
+ingressClass:
+  enabled: true
+  name: traefik
+  isDefaultClass: false
+providers:
+  kubernetesIngress:
+    enabled: true
+    ingressClass: traefik
+    # NodePort has no load-balancer status to copy. Publish the host entrypoint.
+    publishedService:
+      enabled: false
+    ingressEndpoint:
+      hostname: jithendar.com
+service:
+  spec:
+    type: NodePort
+# The host's HAProxy (../expose-ingress.sh) sends the PROXY protocol, so Traefik sees each visitor's real IP
+# instead of the node's (kube-proxy rewrites the source of NodePort traffic). Only the minikube Docker network
+# is trusted to send the header; connections without it are still accepted. Roll out this first, then
+# HAProxy: the other way round, Traefik would reject every connection.
+ports:
+  web:
+    nodePort: 30080
+    proxyProtocol:
+      trustedIPs: ["192.168.49.0/24"]
+  websecure:
+    nodePort: 30443
+    proxyProtocol:
+      trustedIPs: ["192.168.49.0/24"]
+    # Traefik v3 reads each whole request, body included, within readTimeout (default 60s). A Docker push sends a
+    # layer as one request, and a 1 GB layer at 10 MB/s takes 100s (Harbor: ../harbor/README.md). The HAProxy in
+    # front (../expose-ingress.sh) only times out after an hour idle. Write and idle timeouts keep their defaults.
+    transport:
+      respondingTimeouts:
+        readTimeout: 900s
+# HTTP stays available for cert-manager's HTTP-01 challenges.
+# Grafana's own Ingress is HTTPS-only. The dashboard is not exposed.
+ingressRoute:
+  dashboard:
+    enabled: false
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi

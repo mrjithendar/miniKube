@@ -1,0 +1,36 @@
+# Opt-in: not in ../kustomization.yaml, so "deploy.py all" never selects it. Deploy by name:
+#   python3 scripts/argocd/deploy.py harbor --context mk4
+# Prerequisites and order: deploy/minikube/harbor/README.md.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: harbor
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: roboshop-gitops
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  project: mk-registry
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: harbor
+  syncPolicy:
+    syncOptions:
+    - FailOnSharedResource=true
+    - PruneLast=true
+    - CreateNamespace=true
+  sources:
+  - repoURL: https://helm.goharbor.io
+    chart: harbor
+    targetRevision: 1.19.4
+    helm:
+      releaseName: harbor
+      valueFiles:
+      - $values/deploy/minikube/harbor/values.yaml
+  - repoURL: https://github.com/mrjithendar/miniKube.git
+    targetRevision: master
+    ref: values
+  - repoURL: https://github.com/mrjithendar/miniKube.git
+    targetRevision: master
+    path: deploy/minikube/harbor/manifests

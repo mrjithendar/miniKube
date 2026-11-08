@@ -1,0 +1,9 @@
+# config.alloy at the chart root, loaded verbatim (not templated).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: monitoring
+data:
+  config.alloy: |
+    {{- .Files.Get "config.alloy" | nindent 4 }}

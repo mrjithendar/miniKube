@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: roboshop-gitops
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  project: mk-platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    syncOptions:
+    - FailOnSharedResource=true
+    - PruneLast=true
+    - CreateNamespace=true
+    - ServerSideApply=true
+  sources:
+  - repoURL: quay.io/jetstack/charts
+    chart: cert-manager
+    targetRevision: v1.20.4
+    helm:
+      releaseName: cert-manager
+      valueFiles:
+      - $values/deploy/minikube/cert-manager/values.yaml
+  - repoURL: https://github.com/mrjithendar/miniKube.git
+    targetRevision: master
+    ref: values

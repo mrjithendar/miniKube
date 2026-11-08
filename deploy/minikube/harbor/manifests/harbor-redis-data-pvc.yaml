@@ -1,0 +1,18 @@
+# Job queue and schedules (jobservice) survive restarts in the append-only file; sessions and caches are disposable.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-redis-data
+  namespace: harbor
+  labels:
+    app.kubernetes.io/name: harbor-redis
+    app.kubernetes.io/part-of: harbor
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    argocd.argoproj.io/sync-wave: '-1'
+spec:
+  storageClassName: standard
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi

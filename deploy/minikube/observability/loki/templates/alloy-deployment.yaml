@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alloy
+  namespace: monitoring
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: alloy
+  template:
+    metadata:
+      annotations:
+        # Rolls the pod when config.alloy changes.
+        checksum/config: {{ .Files.Get "config.alloy" | sha256sum }}
+      labels:
+        app: alloy
+    spec:
+      # Minikube hostPath data lives on this node; move only together with the data.
+      nodeSelector:
+        kubernetes.io/hostname: mk4-m03
+      securityContext:
+        runAsUser: 473
+        runAsGroup: 473
+        runAsNonRoot: true
+        fsGroup: 473
+      automountServiceAccountToken: true
+      containers:
+      - name: alloy
+        image: grafana/alloy:v1.21.2
+        args:
+        - run
+        - --server.http.listen-addr=0.0.0.0:12345
+        - --storage.path=/var/alloy
+        - /etc/alloy/config.alloy
+        ports:
+        - name: http
+          containerPort: 12345
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 384Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: config
+          mountPath: /etc/alloy
+          readOnly: true
+        - name: data
+          mountPath: /var/alloy
+        - name: tmp
+          mountPath: /tmp
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: http
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: alloy-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: alloy-data
+      - name: tmp
+        emptyDir: {}
+      serviceAccountName: alloy
+      initContainers:
+      - name: data-permissions
+        image: busybox:1.37.0
+        command:
+        - sh
+        - -ec
+        - chown -R 473:473 /data
+        securityContext:
+          runAsUser: 0
+          runAsNonRoot: false
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - CHOWN
+            - FOWNER
+            - DAC_OVERRIDE
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 32Mi
+        volumeMounts:
+        - name: data
+          mountPath: /data

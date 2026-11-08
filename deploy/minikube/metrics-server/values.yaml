@@ -1,0 +1,12 @@
+replicas: 1
+# Minikube kubelet certificates may lack verifiable node-IP SANs.
+# This exception is for kubelet scraping in this sandbox, not the external API.
+args:
+  - --kubelet-insecure-tls
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 300m
+    memory: 256Mi

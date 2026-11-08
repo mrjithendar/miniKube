@@ -1,0 +1,5 @@
+apiVersion: v2
+name: otel-collector
+version: 0.1.0
+type: application
+description: OpenTelemetry Collector that forwards traces to Jaeger

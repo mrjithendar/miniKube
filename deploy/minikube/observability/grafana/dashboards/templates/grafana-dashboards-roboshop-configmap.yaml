@@ -1,0 +1,11 @@
+# Grafana folder RoboShop. JSON at the chart root, loaded verbatim (never templated).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-roboshop
+  namespace: monitoring
+data:
+  {{- range $path, $_ := .Files.Glob "roboshop-*.json" }}
+  {{ base $path }}: |-
+    {{- $.Files.Get $path | nindent 4 }}
+  {{- end }}

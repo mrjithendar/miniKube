@@ -1,0 +1,169 @@
+# Pinned grafana-community chart; TLS terminates at Traefik.
+fullnameOverride: grafana
+replicas: 1
+deploymentStrategy:
+  type: Recreate
+service:
+  type: ClusterIP
+  port: 80
+persistence:
+  enabled: true
+  size: 2Gi
+  accessModes: [ReadWriteOnce]
+  annotations:
+    # terraform destroy and helm uninstall leave the volume and its data.
+    helm.sh/resource-policy: keep
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+# Shared with Prometheus's Traefik BasicAuth middleware; created by credentials.py.
+admin:
+  existingSecret: monitoring-auth
+  userKey: username
+  passwordKey: password
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  annotations:
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  hosts: [jithendar.com]
+  path: /grafana
+  pathType: Prefix
+  tls:
+    - hosts: [jithendar.com]
+# Do not strip /grafana at the ingress: Grafana handles the prefix itself.
+grafana.ini:
+  server:
+    domain: jithendar.com
+    root_url: https://jithendar.com/grafana/
+    serve_from_sub_path: true
+    protocol: http
+  security:
+    cookie_secure: true
+    cookie_samesite: lax
+  users:
+    allow_sign_up: false
+  auth.anonymous:
+    enabled: false
+  analytics:
+    reporting_enabled: false
+    check_for_updates: false
+  # Jaeger 2.x serves only /api/v3. With this toggle the Jaeger data source uses it for trace-by-id, services and
+  # operations; its Search and dependency graph still call the removed /api/* and fail (dashboards find traces
+  # through Loki's trace_id instead). Experimental in Grafana 13.2.
+  feature_toggles:
+    enable: jaegerEnableGrpcEndpoint
+readinessProbe:
+  httpGet:
+    path: /grafana/api/health
+    port: grafana
+livenessProbe:
+  httpGet:
+    path: /grafana/api/health
+    port: grafana
+
+# Grafana queries Prometheus inside the cluster; ingress authentication is external only.
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: roboshop-prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus.monitoring.svc.cluster.local:9090/prometheus
+        isDefault: true
+        editable: false
+        jsonData:
+          httpMethod: POST
+          timeInterval: 30s
+      - name: Loki
+        uid: roboshop-loki
+        type: loki
+        access: proxy
+        url: http://loki.monitoring.svc:3100
+        isDefault: false
+        editable: false
+        jsonData:
+          maxLines: 1000
+          # Log lines carry trace_id=<32 hex>. TraceID opens the trace in Grafana (Jaeger data source below);
+          # TraceID (Jaeger UI) opens Jaeger's own UI, which is not public: kubectl -n observability
+          # port-forward svc/jaeger 16686 first.
+          derivedFields:
+            - name: TraceID
+              matcherRegex: "trace_id=([0-9a-f]{32})"
+              datasourceUid: jaeger
+              url: "$${__value.raw}"  # the query for the Jaeger data source; $$ escapes Grafana's env-var expansion
+              urlDisplayLabel: "View trace"
+            - name: TraceID (Jaeger UI)
+              matcherRegex: "trace_id=([0-9a-f]{32})"
+              url: "http://localhost:16686/trace/$${__value.raw}"
+              urlDisplayLabel: "Open in Jaeger UI (port-forward)"
+      # Traces from the OpenTelemetry collector (services jithendar-com, moks-worker). Needs the
+      # jaegerEnableGrpcEndpoint toggle above; no NetworkPolicy in observability, so Grafana reaches it directly.
+      - name: Jaeger
+        uid: jaeger
+        type: jaeger
+        access: proxy
+        url: http://jaeger.observability.svc.cluster.local:16686
+        isDefault: false
+        editable: false
+        jsonData:
+          nodeGraph:
+            enabled: true
+          # Span → log lines of the same trace. Every app that logs trace_id writes it as trace_id=<hex>.
+          tracesToLogsV2:
+            datasourceUid: roboshop-loki
+            spanStartTimeShift: "-5m"
+            spanEndTimeShift: "5m"
+            customQuery: true
+            query: '{namespace=~"jithendar|moks"} |= "trace_id=$${__trace.traceId}"'
+
+# The ConfigMaps come from the grafana-dashboards release (minikube-infrastructure/grafana.tf): RoboShop and MOKS
+# from ./dashboards, Jithendar.com from the jithendar.com checkout's grafana/ folder.
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: roboshop
+        orgId: 1
+        folder: RoboShop
+        type: file
+        disableDeletion: true
+        editable: false
+        allowUiUpdates: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/roboshop
+      - name: jithendar
+        orgId: 1
+        folder: Jithendar.com
+        type: file
+        disableDeletion: true
+        editable: false
+        allowUiUpdates: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/jithendar
+      - name: moks
+        orgId: 1
+        folder: MOKS
+        type: file
+        disableDeletion: true
+        editable: false
+        allowUiUpdates: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/moks
+dashboardsConfigMaps:
+  roboshop: grafana-dashboards-roboshop
+  jithendar: grafana-dashboards-jithendar
+  moks: grafana-dashboards-moks
+
+# Minikube hostPath data lives on this node; move only together with the data.
+nodeSelector:
+  kubernetes.io/hostname: mk4-m04

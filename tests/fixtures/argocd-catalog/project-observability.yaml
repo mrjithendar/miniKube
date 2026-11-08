@@ -1,0 +1,51 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: mk-observability
+  namespace: argocd
+spec:
+  description: mk4 observability stack (Grafana, Prometheus, Loki + Alloy, OpenTelemetry Collector, Jaeger)
+  sourceRepos:
+  - https://github.com/mrjithendar/miniKube.git
+  - https://grafana-community.github.io/helm-charts
+  # grafana/ folder: the jithendar.com dashboards (ConfigMap only; see namespaceResourceWhitelist).
+  - https://github.com/mrjithendar/jithendar.com.git
+  destinations:
+  - namespace: monitoring
+    server: https://kubernetes.default.svc
+  - namespace: observability
+    server: https://kubernetes.default.svc
+  # otel-collector's ExternalName Service roboshop-ai/otel-collector, so RoboShop pods can export without a cross-namespace name.
+  - namespace: roboshop-ai
+    server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+  # Alloy reads pods and their logs in every namespace; Prometheus reads nodes for kubelet and cAdvisor.
+  - group: rbac.authorization.k8s.io
+    kind: ClusterRole
+  - group: rbac.authorization.k8s.io
+    kind: ClusterRoleBinding
+  namespaceResourceWhitelist:
+  - group: ''
+    kind: ConfigMap
+  - group: ''
+    kind: Service
+  - group: ''
+    kind: ServiceAccount
+  - group: ''
+    kind: PersistentVolumeClaim
+  - group: apps
+    kind: Deployment
+  # Authenticated public routes: Loki reads and pushes, /prometheus, /grafana.
+  - group: networking.k8s.io
+    kind: Ingress
+  - group: traefik.io
+    kind: Middleware
+  # Argo CD leaves unlisted kinds out of the app tree, so these two are what show the pods, logs and events.
+  - group: apps
+    kind: ReplicaSet
+  - group: ''
+    kind: Pod
+  - group: rbac.authorization.k8s.io
+    kind: Role
+  - group: rbac.authorization.k8s.io
+    kind: RoleBinding

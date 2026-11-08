@@ -1,0 +1,20 @@
+# Values for oci://quay.io/jetstack/charts/cert-manager.
+crds:
+  enabled: true
+prometheus:
+  enabled: false
+resources:
+  requests: {cpu: 20m, memory: 64Mi}
+  limits: {cpu: 500m, memory: 256Mi}
+webhook:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 250m, memory: 128Mi}
+cainjector:
+  resources:
+    requests: {cpu: 10m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 256Mi}
+# DNS-01 self check over DNS-over-HTTPS: mk4 pods cannot reach port 53 on the internet, so querying Cloudflare's
+# nameservers directly timed out ("dial tcp 172.64.33.73:53: i/o timeout") and the wildcard Certificate never issued.
+dns01RecursiveNameservers: "https://1.1.1.1/dns-query,https://8.8.8.8/dns-query"
+dns01RecursiveNameserversOnly: true

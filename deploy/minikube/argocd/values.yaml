@@ -1,0 +1,42 @@
+# TLS terminates at Traefik; do not strip /argocd from upstream requests.
+fullnameOverride: argocd
+configs:
+  cm:
+    url: https://jithendar.com/argocd
+    admin.enabled: true
+    users.anonymous.enabled: false
+  params:
+    server.insecure: true
+    server.rootpath: /argocd
+    server.basehref: /argocd
+  rbac:
+    policy.default: ''
+server:
+  replicas: 1
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: false
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+controller:
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: '1', memory: 1Gi}
+repoServer:
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: '1', memory: 1Gi}
+redis:
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 256Mi}
+dex:
+  enabled: false
+notifications:
+  enabled: false
+applicationSet:
+  enabled: false

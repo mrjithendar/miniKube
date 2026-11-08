@@ -1,0 +1,5 @@
+apiVersion: v2
+name: roboshop-prometheus
+version: 0.1.0
+type: application
+description: Prometheus with persistent storage and authenticated HTTPS ingress

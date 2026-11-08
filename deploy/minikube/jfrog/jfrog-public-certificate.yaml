@@ -1,0 +1,11 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: jfrog-public
+  namespace: jfrog
+spec:
+  secretName: jfrog-public-tls
+  dnsNames: [jfrog.jithendar.com, jithendar.com]
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer

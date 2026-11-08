@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- jfrog-public-certificate.yaml
+- jfrog-shortcut-middleware.yaml
+- jfrog-https-middleware.yaml
+- jfrog-ingress.yaml
+- jfrog-shortcut-ingress.yaml
+- jfrog-http-ingress.yaml

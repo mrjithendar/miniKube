@@ -1,0 +1,23 @@
+# Key pair Harbor core signs registry tokens with (core.secretName in ../values.yaml). Without it the chart runs
+# genCA on every render, so each Argo CD sync would replace the key. Tokens live 30 minutes; losing this Secret
+# only logs clients out, so it is not part of the backup.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: harbor-token
+  namespace: harbor
+  annotations:
+    argocd.argoproj.io/sync-wave: '-1'
+spec:
+  secretName: harbor-token-tls
+  commonName: harbor-token-ca
+  duration: 87600h
+  renewBefore: 720h
+  privateKey:
+    algorithm: RSA
+    size: 4096
+    encoding: PKCS1
+    rotationPolicy: Never
+  issuerRef:
+    name: harbor-token-selfsigned
+    kind: Issuer

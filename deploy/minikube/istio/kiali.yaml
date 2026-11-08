@@ -1,0 +1,51 @@
+# Values for kiali-server 2.34.0 (minikube-infrastructure/kiali.tf). Public at https://jithendar.com/kiali/.
+auth:
+  strategy: token # sign in with a ServiceAccount token: this is on a public path (README.md, Kiali)
+deployment:
+  view_only_mode: true # the UI can read the mesh but never change it
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 512Mi
+  # Traefik terminates TLS with the default certificate (jithendar.com TLSStore), like /grafana and /prometheus.
+  ingress:
+    enabled: true
+    override_yaml:
+      metadata:
+        annotations:
+          traefik.ingress.kubernetes.io/router.tls: "true"
+      spec:
+        ingressClassName: traefik
+        tls:
+          - hosts: [jithendar.com]
+        rules:
+          - host: jithendar.com
+            http:
+              paths:
+                - path: /kiali
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: kiali
+                      port:
+                        number: 20001
+external_services:
+  # The mk4 Prometheus (observability/prometheus) serves under /prometheus and scrapes istiod and the sidecars.
+  prometheus:
+    url: http://prometheus.monitoring.svc.cluster.local:9090/prometheus
+  # Grafana needs a login and Jaeger 2.x has only /api/v3; Kiali links to neither.
+  grafana:
+    enabled: false
+  tracing:
+    enabled: false
+login_token:
+  # Secret kiali-signing-key, created by Terraform (kiali.tf) from a random value. Left empty, the chart would
+  # generate a new key on every upgrade and sign everyone out.
+  signing_key: secret:kiali-signing-key:key
+server:
+  web_root: /kiali
+  web_fqdn: jithendar.com
+  web_schema: https
+  web_port: "443"

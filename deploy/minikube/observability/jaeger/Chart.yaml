@@ -1,0 +1,5 @@
+apiVersion: v2
+name: jaeger
+version: 0.1.0
+type: application
+description: Jaeger 2.x all-in-one with in-memory trace storage

@@ -1,0 +1,29 @@
+# Values for istio-release istiod 1.30.7 (minikube-infrastructure/istio.tf). Same mesh settings as EKS
+# (tools repository: deploy/eks/helm-values/istiod.yaml); one replica, because no namespace is labelled istio-injection=enabled yet,
+# so the fail-closed injection webhook blocks nothing while istiod restarts.
+pilot:
+  autoscaleEnabled: false
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  env:
+    # The proxy starts before and stops after the application, including for init containers and Jobs.
+    ENABLE_NATIVE_SIDECARS: "true"
+global:
+  proxy:
+    resources:
+      requests:
+        cpu: 20m
+        memory: 64Mi
+      limits:
+        memory: 256Mi
+meshConfig:
+  # Mesh retries could replay a checkout or payment; the applications own idempotency.
+  defaultHttpRetryPolicy:
+    attempts: 0
+  defaultConfig:
+    holdApplicationUntilProxyStarts: true

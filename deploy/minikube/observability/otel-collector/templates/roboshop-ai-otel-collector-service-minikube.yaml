@@ -1,0 +1,16 @@
+# Alias so services using the short name otel-collector:4318 in roboshop-ai keep
+# exporting after the collector moved to the observability namespace.
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: roboshop-ai
+  labels:
+    app.kubernetes.io/part-of: roboshop-ai
+spec:
+  type: ExternalName
+  externalName: otel-collector.observability.svc.cluster.local
+  ports:
+  - name: p4318
+    port: 4318
+    targetPort: 4318

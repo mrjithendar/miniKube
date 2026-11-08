@@ -1,0 +1,175 @@
+name: Create minikube infrastructure
+
+# Applies minikube-infrastructure/ (Helm releases on mk4: metrics-server, cert-manager, Let's Encrypt, Istio, Kiali,
+# Prometheus, Grafana, Loki, OpenTelemetry Collector, Jaeger) on pushes to master, or by hand with "plan only" to see
+# drift. Pull requests are checked by check-mk-infrastructure.yml.
+# Off until repository variable MINIKUBE_TERRAFORM_APPLY is "true": set it after the one-time move of the live add-ons
+# off Argo CD (minikube-infrastructure/README.md), never before.
+#
+# Access, all set by scripts/setup-minikube-terraform-ci.sh:
+#   mk4    ServiceAccount kube-system/github-minikube-terraform; kubeconfig template .github/mk4-terraform-kubeconfig.yaml
+#          filled from MK4_API_SERVER, MK4_CA_DATA (variables) and MK4_TERRAFORM_TOKEN (secret of environment mk4).
+#   state  AWS role MK4_TERRAFORM_ROLE_ARN through GitHub OIDC (tools repository: infrastructure/github-minikube-terraform.tf):
+#          the S3 state object and its lock, nothing else.
+# Runs on GitHub-hosted runners, never on the mk4 server (tools repository: runner/README.md).
+on:
+  workflow_dispatch:
+    inputs:
+      plan_only:
+        description: Plan without applying
+        type: boolean
+        default: false
+  push:
+    branches: [master]
+    paths:
+      - 'minikube-infrastructure/**'
+      - 'deploy/minikube/cert-manager/**'
+      - 'deploy/minikube/metrics-server/values.yaml'
+      - 'deploy/minikube/istio/**'
+      - 'deploy/minikube/observability/**'
+      - '.github/mk4-terraform-kubeconfig.yaml'
+      - '.github/workflows/create-mk-infrastructure.yml'
+
+permissions:
+  contents: read
+
+# Never cancel an active apply: Helm would leave a release pending.
+concurrency:
+  group: terraform-minikube-mk4
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    if: github.ref == 'refs/heads/master' && vars.MINIKUBE_TERRAFORM_APPLY == 'true'
+    runs-on: ubuntu-latest
+    environment: mk4
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: bash
+        working-directory: miniKube
+    env:
+      AWS_REGION: us-east-1
+      TF_IN_AUTOMATION: 'true'
+      TF_INPUT: 'false'
+
+    steps:
+      # miniKube and jithendar.com side by side, as on a workstation: grafana.tf reads ../jithendar.com/grafana.
+      # A dashboard change in jithendar.com does not trigger this workflow; run it by hand.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: miniKube
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mrjithendar/jithendar.com
+          ref: master
+          path: jithendar.com
+          persist-credentials: false
+          sparse-checkout: grafana
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+
+      # Without the role ARN, configure-aws-credentials falls back to static keys and retries 12 times with
+      # "Could not load credentials from any providers".
+      - name: Check CI settings
+        env:
+          MK4_TERRAFORM_ROLE_ARN: ${{ vars.MK4_TERRAFORM_ROLE_ARN }}
+          MK4_API_SERVER: ${{ vars.MK4_API_SERVER }}
+          MK4_CA_DATA: ${{ vars.MK4_CA_DATA }}
+          MK4_TERRAFORM_TOKEN: ${{ secrets.MK4_TERRAFORM_TOKEN }}
+        run: |
+          missing=()
+          for v in MK4_TERRAFORM_ROLE_ARN MK4_API_SERVER MK4_CA_DATA MK4_TERRAFORM_TOKEN; do
+            [[ -n "${!v}" ]] || missing+=("$v")
+          done
+          [[ ${#missing[@]} -eq 0 ]] || { echo "::error::Not set: ${missing[*]}. Run scripts/setup-minikube-terraform-ci.sh"; exit 1; }
+
+      - name: AWS credentials (state only)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.MK4_TERRAFORM_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Kubeconfig for mk4
+        env:
+          MK4_API_SERVER: ${{ vars.MK4_API_SERVER }}
+          MK4_CA_DATA: ${{ vars.MK4_CA_DATA }}
+          MK4_TERRAFORM_TOKEN: ${{ secrets.MK4_TERRAFORM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for v in MK4_API_SERVER MK4_CA_DATA MK4_TERRAFORM_TOKEN; do
+            [[ -n "${!v}" ]] || { echo "::error::$v is not set; run scripts/setup-minikube-terraform-ci.sh"; exit 1; }
+          done
+          (umask 077; perl -pe 's/\$\{(MK4_[A-Z_]+)\}/$ENV{$1}/g' .github/mk4-terraform-kubeconfig.yaml > "$RUNNER_TEMP/kubeconfig")
+          echo "TF_VAR_kubeconfig_path=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+
+      # The DNS-01 issuers need it; without it the wildcard Certificate never becomes Ready (README.md).
+      - name: Check prerequisites on mk4
+        run: |
+          set -euo pipefail
+          kubectl --request-timeout=20s get crd middlewares.traefik.io -o name \
+            || { echo "::error::Traefik CRDs missing: run ./bootstrap-cluster.sh first"; exit 1; }
+          left=$(kubectl --request-timeout=20s -n argocd get applications -o name 2>/dev/null \
+            | grep -E '/(metrics-server|grafana|prometheus|loki|otel-collector|jaeger|cert-manager)$' || true)
+          [[ -z "$left" ]] || { echo "::error::Argo CD still owns: $left (minikube-infrastructure/README.md steps 1-4)"; exit 1; }
+          kubectl --request-timeout=20s -n cert-manager get secret cloudflare-api-token -o name \
+            || echo "::warning::Secret cert-manager/cloudflare-api-token missing: the wildcard certificate will stay pending"
+
+      - name: terraform format check
+        run: terraform -chdir=minikube-infrastructure fmt -check -recursive
+
+      - name: terraform init & validate
+        run: |
+          terraform -chdir=minikube-infrastructure init -input=false -no-color
+          terraform -chdir=minikube-infrastructure validate -no-color
+
+      - name: terraform test
+        run: terraform -chdir=minikube-infrastructure test -no-color -var-file=vars/mk4.tfvars
+
+      - name: terraform plan
+        run: |
+          set -euo pipefail
+          umask 077
+          terraform -chdir=minikube-infrastructure plan -input=false -no-color -lock-timeout=5m \
+            -var-file=vars/mk4.tfvars -out=tf.tfplan | tee "$RUNNER_TEMP/plan.txt"
+          { echo '### terraform plan'; echo '```'; grep -E '^  # |^Plan:|^No changes' "$RUNNER_TEMP/plan.txt" || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: terraform apply
+        if: ${{ !inputs.plan_only }}
+        run: terraform -chdir=minikube-infrastructure apply -input=false -no-color -lock-timeout=5m tf.tfplan
+
+      - name: Verify releases
+        if: ${{ !inputs.plan_only }}
+        run: |
+          set -euo pipefail
+          # Only this root's releases: the argocd and traefik releases on mk4 belong to bootstrap-cluster.sh.
+          releases='^(metrics-server|cert-manager|letsencrypt-jithendar|istio-base|istiod|kiali|prometheus|grafana-dashboards|grafana|loki|otel-collector|jaeger)$'
+          { echo '### Helm releases'; echo '```'; helm list -A --kube-context mk4 --filter "$releases"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          deployed=$(helm list -A --kube-context mk4 --filter "$releases" --deployed -q | wc -l)
+          [[ "$deployed" -eq 12 ]] || { echo "::error::$deployed of 12 releases deployed"; helm list -A --kube-context mk4 --filter "$releases"; exit 1; }
+          # A freshly started pod (Kiali warms its caches) and a new Traefik route answer 503 for a while: retry for 3 min.
+          for path in grafana/api/health prometheus/-/ready kiali/; do
+            for attempt in $(seq 1 18); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://jithendar.com/$path" || true)
+              [[ "$code" =~ ^(200|302|401)$ ]] && break
+              echo "https://jithendar.com/$path -> $code (attempt $attempt of 18), retrying in 10 s"
+              sleep 10
+            done
+            echo "https://jithendar.com/$path -> $code"
+            [[ "$code" =~ ^(200|302|401)$ ]] || { echo "::error::/$path answered $code for 3 minutes"; exit 1; }
+          done
+
+      # The plan and the kubeconfig hold credentials; do not leave them on the runner.
+      - name: remove plan and kubeconfig
+        if: always()
+        run: rm -f minikube-infrastructure/tf.tfplan "$RUNNER_TEMP/kubeconfig" "$RUNNER_TEMP/plan.txt"

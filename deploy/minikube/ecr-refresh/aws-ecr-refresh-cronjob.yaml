@@ -1,0 +1,128 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ecr-refresh
+  namespace: roboshop-ai
+spec:
+  schedule: 0 */6 * * *
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: ecr-refresh
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+          - name: ecr-token
+            image: public.ecr.aws/aws-cli/aws-cli:2.39.6
+            command:
+            - /bin/sh
+            - -ec
+            args:
+            - aws ecr get-authorization-token --region "$AWS_REGION" --query "authorizationData[0].authorizationToken"
+              --output text > /work/token 2>/work/aws-error || { echo "ECR authentication
+              failed; check AWS credentials and permissions" >&2; exit 1; }; chmod
+              600 /work/token
+            env:
+            - name: AWS_REGION
+              value: us-east-1
+            - name: AWS_EC2_METADATA_DISABLED
+              value: 'true'
+            - name: AWS_MAX_ATTEMPTS
+              value: '3'
+            - name: HOME
+              value: /tmp
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: roboshop-secrets
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: roboshop-secrets
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_SESSION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: roboshop-secrets
+                  key: AWS_SESSION_TOKEN
+                  optional: true
+            securityContext: &id001
+              runAsNonRoot: true
+              runAsUser: 1000
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            resources: &id002
+              requests:
+                cpu: 10m
+                memory: 64Mi
+              limits:
+                cpu: 250m
+                memory: 256Mi
+            volumeMounts:
+            - name: work
+              mountPath: /work
+            - name: tmp
+              mountPath: /tmp
+          containers:
+          - name: refresh
+            image: python:3.15.0-slim
+            command:
+            - python
+            - -B
+            - /scripts/refresh.py
+            env:
+            - name: ECR_REGISTRY
+              value: 881026659929.dkr.ecr.us-east-1.amazonaws.com
+            # Every other namespace gets ecr-pull, including ones created later.
+            - name: EXCLUDED_NAMESPACES
+              value: default,kube-system,kube-public,kube-node-lease
+            securityContext: *id001
+            resources: *id002
+            volumeMounts:
+            - name: work
+              mountPath: /work
+              readOnly: true
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+            - name: api
+              mountPath: /var/run/api
+              readOnly: true
+          volumes:
+          - name: work
+            emptyDir:
+              medium: Memory
+              sizeLimit: 1Mi
+          - name: tmp
+            emptyDir:
+              sizeLimit: 8Mi
+          - name: script
+            configMap:
+              name: ecr-refresh-script
+          - name: api
+            projected:
+              sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                  - key: ca.crt
+                    path: ca.crt

@@ -1,0 +1,51 @@
+# Jaeger 2.22 all-in-one, in-memory storage. Without this file Jaeger kept every trace in memory (no limit by
+# default) and was OOMKilled at the 256Mi limit (11 restarts by 2026-11-04, each one losing every trace).
+# max_traces is what bounds memory. A page view is about 15 spans (~10 kB as JSON); 5000 traces is an estimate,
+# not a measurement: alert JaegerMemoryNearLimit says when it is too many for 384Mi.
+# The Deployment carries this file's checksum, so editing it rolls Jaeger.
+service:
+  extensions: [jaeger_storage, jaeger_query]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter]
+  telemetry:
+    resource:
+      service.name: jaeger
+    # Own metrics for Prometheus job jaeger (dropped/stored spans).
+    metrics:
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+
+extensions:
+  jaeger_query:
+    storage:
+      traces: memstore
+    http:
+      endpoint: 0.0.0.0:16686
+    grpc:
+      endpoint: 0.0.0.0:16685
+  jaeger_storage:
+    backends:
+      memstore:
+        memory:
+          max_traces: 5000
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: memstore

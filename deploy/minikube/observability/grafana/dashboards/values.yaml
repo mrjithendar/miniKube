@@ -1,0 +1,5 @@
+# Grafana's file provider mounts these ConfigMaps read-only (../values.yaml: dashboardsConfigMaps) and picks up changes
+# within 30 s, without a restart.
+# {file name: JSON} of the Jithendar.com dashboards; minikube-infrastructure/grafana.tf fills it from the jithendar.com
+# checkout's grafana/ folder.
+jithendar: {}

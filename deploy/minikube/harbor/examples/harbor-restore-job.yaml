@@ -1,0 +1,83 @@
+# Template: nothing applies it. Restores the dump named in R2's backups/harbor/LATEST, and the blobs, into a
+# freshly synced Harbor whose core, jobservice and registry are scaled to 0. Steps: README.md "Restore".
+# Replace DUMP_NAME below with the contents of LATEST (for example registry-20261107T023000Z.dump).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: harbor-restore
+  namespace: harbor
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: mk4-m05
+      automountServiceAccountToken: false
+      initContainers:
+      - name: download
+        image: rclone/rclone:1.75.2
+        command: [sh, -c]
+        args:
+        - |
+          set -eu
+          src="r2:$R2_BUCKET/backups/harbor"
+          rclone copyto "$src/postgres/$DUMP" /work/registry.dump
+          rclone copy "$src/registry/docker" /storage/docker --transfers 4 --checkers 8 --stats-one-line --stats 60s
+          # The registry runs as uid 10000 (chart securityContext).
+          chown -R 10000:10000 /storage/docker
+        env:
+        - name: DUMP
+          value: DUMP_NAME
+        - name: R2_BUCKET
+          valueFrom:
+            secretKeyRef: {name: harbor-backup-r2, key: bucket}
+        - name: RCLONE_CONFIG_R2_TYPE
+          value: s3
+        - name: RCLONE_CONFIG_R2_PROVIDER
+          value: Cloudflare
+        - name: RCLONE_CONFIG_R2_REGION
+          value: auto
+        - name: RCLONE_CONFIG_R2_NO_CHECK_BUCKET
+          value: 'true'
+        - name: RCLONE_CONFIG_R2_ENDPOINT
+          valueFrom:
+            secretKeyRef: {name: harbor-backup-r2, key: endpoint}
+        - name: RCLONE_CONFIG_R2_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef: {name: harbor-backup-r2, key: access-key-id}
+        - name: RCLONE_CONFIG_R2_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef: {name: harbor-backup-r2, key: secret-access-key}
+        volumeMounts:
+        - name: work
+          mountPath: /work
+        - name: registry-data
+          mountPath: /storage
+      containers:
+      - name: restore
+        image: postgres:18.6-alpine
+        command: [sh, -c]
+        # Recreate the database Harbor core initialised on first start, then load the dump into it.
+        args:
+        - |
+          set -eu
+          dropdb -h harbor-postgres -U harbor --if-exists registry
+          createdb -h harbor-postgres -U harbor registry
+          pg_restore -h harbor-postgres -U harbor -d registry --no-owner --exit-on-error /work/registry.dump
+          echo restored
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef: {name: harbor-credentials, key: password}
+        volumeMounts:
+        - name: work
+          mountPath: /work
+          readOnly: true
+      volumes:
+      - name: work
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: registry-data
+        persistentVolumeClaim:
+          claimName: harbor-registry

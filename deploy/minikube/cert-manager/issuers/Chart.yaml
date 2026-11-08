@@ -1,0 +1,5 @@
+apiVersion: v2
+name: letsencrypt-jithendar
+version: 0.2.0
+type: application
+description: Let's Encrypt DNS-01 ClusterIssuers for jithendar.com and *.jithendar.com, and the wildcard Certificate

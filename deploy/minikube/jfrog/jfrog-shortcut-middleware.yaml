@@ -1,0 +1,10 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: jfrog-shortcut
+  namespace: jfrog
+spec:
+  redirectRegex:
+    regex: '^https?://jithendar\.com/jfrog(/.*)?$'
+    replacement: 'https://jfrog.jithendar.com/ui/'
+    permanent: false

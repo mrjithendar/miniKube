@@ -1,0 +1,33 @@
+# Loki has no authentication, so only the read endpoints MOKS calls are public. Everything else under
+# /loki stays cluster-internal, including push and delete. Each new path here is a new public endpoint.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: loki-read
+  namespace: monitoring
+  annotations:
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: monitoring-loki-read-auth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+  - hosts: [jithendar.com]
+  rules:
+  - host: jithendar.com
+    http:
+      paths:
+      - path: /loki/api/v1/query_range
+        pathType: Exact
+        backend: &loki
+          service:
+            name: loki
+            port: {number: 3100}
+      - path: /loki/api/v1/labels
+        pathType: Exact
+        backend: *loki
+      - path: /loki/api/v1/format_query
+        pathType: Exact
+        backend: *loki
+      - path: /loki/api/v1/label
+        pathType: Prefix
+        backend: *loki

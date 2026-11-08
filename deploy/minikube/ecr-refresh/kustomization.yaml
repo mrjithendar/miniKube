@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- roboshop-ai-ecr-refresh-service-account.yaml
+- ecr-refresh-cluster-role.yaml
+- ecr-refresh-cluster-role-binding.yaml
+- aws-ecr-refresh-cronjob.yaml
+configMapGenerator:
+- name: ecr-refresh-script
+  namespace: roboshop-ai
+  files:
+  - refresh.py

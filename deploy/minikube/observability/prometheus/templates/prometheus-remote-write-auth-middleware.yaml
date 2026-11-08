@@ -1,0 +1,12 @@
+{{- if .Values.remoteWrite.enabled }}
+# Separate from monitoring-auth so a remote cluster holds a write-only login, not the Grafana admin password.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: prometheus-remote-write-auth
+  namespace: {{ .Release.Namespace }}
+spec:
+  basicAuth:
+    secret: {{ .Values.remoteWrite.secretName }}
+    removeHeader: true
+{{- end }}

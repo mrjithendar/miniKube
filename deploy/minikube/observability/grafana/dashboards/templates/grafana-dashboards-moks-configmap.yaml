@@ -1,0 +1,11 @@
+# Grafana folder MOKS (copy of the moks repo's deploy/grafana/moks-dashboard.json; edit it there and copy it here). JSON at the chart root, loaded verbatim (never templated).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-moks
+  namespace: monitoring
+data:
+  {{- range $path, $_ := .Files.Glob "moks-*.json" }}
+  {{ base $path }}: |-
+    {{- $.Files.Get $path | nindent 4 }}
+  {{- end }}

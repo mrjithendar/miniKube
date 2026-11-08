@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Opt-in Applications: deploy.py offers them only when named, never for "all", and their workloads are not in
+# ../workload-inventory.json. validate.py checks them with the main catalog.
+resources:
+- project-registry.yaml
+- harbor.yaml

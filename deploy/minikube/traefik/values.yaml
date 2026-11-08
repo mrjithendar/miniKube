@@ -1,6 +1,12 @@
 fullnameOverride: traefik
 deployment:
   replicas: 1
+  podAnnotations:
+    # Istio sidecar (namespace label, ../namespaces/traefik.yaml) for outbound only. Inbound must bypass it: HAProxy
+    # sends the PROXY protocol (below) and the public entry point must not depend on the proxy. Requests to the
+    # apps keep Host jithendar.com and go to pod IPs, so the sidecar passes them through in plain text; moks keeps its
+    # plain-text ports for that (mesh.traefikInMesh: false in the moks chart).
+    traffic.sidecar.istio.io/includeInboundPorts: ""
 ingressClass:
   enabled: true
   name: traefik

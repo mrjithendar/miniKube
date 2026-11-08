@@ -1,0 +1,52 @@
+{{- with .Values.compression }}
+{{- if .enabled }}
+# Response compression in the gateway's HTTP connection managers: zstd, then brotli, then gzip, inserted in that order
+# before the router. With equal q-values in Accept-Encoding, zstd wins (choose_first). Responses that already carry
+# Content-Encoding, are under minContentLength, or have another content type pass through unchanged.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: response-compression
+  namespace: {{ $.Release.Namespace | quote }}
+spec:
+  # Explicit order among EnvoyFilters (istioctl analyze IST0151); the patches only need the router to exist.
+  priority: 10
+  workloadSelector:
+    labels: {{ toYaml $.Values.selector | nindent 6 }}
+  configPatches:
+{{- range $library := list "zstd" "brotli" "gzip" }}
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: {{ printf "envoy.filters.http.compressor.%s" $library | quote }}
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.compressor.v3.Compressor
+            {{- if eq $library "zstd" }}
+            choose_first: true
+            {{- end }}
+            response_direction_config:
+              common_config:
+                min_content_length: {{ $.Values.compression.minContentLength }}
+                content_type: {{ toYaml $.Values.compression.contentTypes | nindent 18 }}
+            compressor_library:
+              name: {{ $library | quote }}
+              typed_config:
+                {{- if eq $library "zstd" }}
+                "@type": type.googleapis.com/envoy.extensions.compression.zstd.compressor.v3.Zstd
+                {{- else if eq $library "brotli" }}
+                "@type": type.googleapis.com/envoy.extensions.compression.brotli.compressor.v3.Brotli
+                {{- else }}
+                "@type": type.googleapis.com/envoy.extensions.compression.gzip.compressor.v3.Gzip
+                {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

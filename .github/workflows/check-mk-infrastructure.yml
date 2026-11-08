@@ -64,7 +64,7 @@ jobs:
       - name: helm lint & template (local charts)
         run: |
           set -euo pipefail
-          for chart in cert-manager/issuers observability/prometheus observability/loki observability/jaeger \
+          for chart in cert-manager/issuers istio/edge observability/prometheus observability/loki observability/jaeger \
                        observability/otel-collector observability/grafana/dashboards; do
             helm lint "deploy/minikube/$chart"
             helm template check "deploy/minikube/$chart" > /dev/null

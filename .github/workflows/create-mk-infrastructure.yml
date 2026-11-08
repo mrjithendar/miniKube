@@ -152,10 +152,10 @@ jobs:
         run: |
           set -euo pipefail
           # Only this root's releases: the argocd release on mk4 belongs to bootstrap-cluster.sh.
-          releases='^(traefik|metrics-server|cert-manager|letsencrypt-jithendar|istio-base|istio-cni|istiod|istio-ingressgateway|kiali|prometheus|grafana-dashboards|grafana|loki|otel-collector|jaeger)$'
+          releases='^(traefik|metrics-server|cert-manager|letsencrypt-jithendar|istio-base|istio-cni|istiod|istio-ingressgateway|istio-edge|kiali|prometheus|grafana-dashboards|grafana|loki|otel-collector|jaeger)$'
           { echo '### Helm releases'; echo '```'; helm list -A --kube-context mk4 --filter "$releases"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           deployed=$(helm list -A --kube-context mk4 --filter "$releases" --deployed -q | wc -l)
-          [[ "$deployed" -eq 15 ]] || { echo "::error::$deployed of 15 releases deployed"; helm list -A --kube-context mk4 --filter "$releases"; exit 1; }
+          [[ "$deployed" -eq 16 ]] || { echo "::error::$deployed of 16 releases deployed"; helm list -A --kube-context mk4 --filter "$releases"; exit 1; }
           # A freshly started pod (Kiali warms its caches) and a new Traefik route answer 503 for a while: retry for 3 min.
           for path in grafana/api/health prometheus/-/ready kiali/; do
             for attempt in $(seq 1 18); do

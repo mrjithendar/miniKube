@@ -35,6 +35,7 @@ run "pinned_releases" {
       helm_release.istiod.namespace == "istio-system" &&
       helm_release.istio_cni.namespace == "istio-system" &&
       helm_release.istio_ingressgateway.namespace == "istio-ingress" &&
+      helm_release.istio_edge.namespace == helm_release.istio_ingressgateway.namespace &&
       helm_release.kiali.namespace == "istio-system" &&
       helm_release.prometheus.namespace == "monitoring" &&
       helm_release.grafana.namespace == "monitoring" &&

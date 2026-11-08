@@ -1,0 +1,5 @@
+apiVersion: v2
+name: istio-edge
+version: 0.1.0
+type: application
+description: Public routing on the Istio ingress gateway for mk4 - Gateways, their certificates, response compression, and the temporary hand-off from Traefik

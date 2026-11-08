@@ -1,0 +1,52 @@
+# Installed by minikube-infrastructure/istio.tf (release istio-edge, namespace istio-ingress). Everything here lives in
+# the gateway's namespace: a Gateway's credentialName Secret must be in the namespace of the gateway pods.
+#
+# Migration away from Traefik, one host at a time:
+#   1. A host gets a Gateway + Certificate here, and its application repo replaces its Traefik Ingresses with a
+#      VirtualService bound to that Gateway (jithendar.com: minikube/60-istio-routing.yaml in that repo).
+#   2. While Traefik still owns the host's ports (the host's HAProxy sends 80/443 to Traefik, and other paths of the
+#      same hostname still have Traefik routes), traefikHandoff below sends the host's leftover requests to the gateway.
+#   3. Once no Traefik route is left for that hostname, deploy/minikube/expose-ingress.sh sends its traffic straight
+#      to the gateway NodePorts (31080/31443) and traefikHandoff for it is deleted.
+selector:
+  istio: ingressgateway
+
+gateways:
+  - name: jithendar-com
+    # Hosts as namespace/hostname: only VirtualServices in that namespace may bind them.
+    hosts:
+      - jithendar/jithendar.com
+      - jithendar/www.jithendar.com
+    certificate:
+      secretName: jithendar-com-gateway-tls
+      # DNS-01 (Cloudflare), so renewals do not depend on Traefik serving /.well-known/acme-challenge.
+      issuer: letsencrypt-dns
+      dnsNames: [jithendar.com, www.jithendar.com]
+
+# Same algorithms, content types and threshold as the Traefik middleware this replaces (jithendar.com repo,
+# formerly minikube/40-middlewares.yaml). Applies to every route on the gateway.
+compression:
+  enabled: true
+  minContentLength: 1024
+  contentTypes:
+    - text/html
+    - text/css
+    - text/plain
+    - text/xml
+    - text/javascript
+    - application/javascript
+    - application/json
+    - application/xml
+    - application/rss+xml
+    - application/manifest+json
+    - image/svg+xml
+
+# Traefik routes, priority 1 (below every Ingress, whose priority is its rule length), that pass the hosts' requests
+# to the gateway. HTTPS is re-encrypted to the gateway's 443 so the gateway terminates TLS exactly as it will once it
+# is the edge: X-Forwarded-Proto is https from Envoy itself, and nothing in the Gateway changes at cutover. Paths
+# that still have their own Traefik Ingress on these hosts (/argocd, /grafana, /moks, ...) keep winning.
+traefikHandoff:
+  enabled: true
+  hosts: [jithendar.com, www.jithendar.com]
+  # SNI and certificate name Traefik checks on the gateway; the gateway's certificate covers both hosts.
+  serverName: jithendar.com

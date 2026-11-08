@@ -1,8 +1,8 @@
 # Values for istio-release gateway 1.30.7 (minikube-infrastructure/istio.tf): the Istio ingress gateway on mk4.
 # Release name istio-ingressgateway gives the pods the label istio=ingressgateway, the selector Gateway resources use.
-# Traefik stays the public edge (NodePorts 30080/30443, forwarded from the host). This gateway gets its own NodePorts
-# 31080/31443, reachable only inside the host's network until something forwards to them or Traefik routes to the
-# Service istio-ingress/istio-ingressgateway.
+# The host forwards 80/443 to Traefik (NodePorts 30080/30443). This gateway has its own NodePorts 31080/31443, reachable
+# only inside the host's network; until the host forwards to them, Traefik hands jithendar.com/www over to the Service
+# istio-ingress/istio-ingressgateway (edge/, traefikHandoff). Routing lives in edge/ and in the apps' VirtualServices.
 service:
   # Minikube has no load balancer: a LoadBalancer Service would stay <pending> and helm --wait would time out.
   type: NodePort
@@ -21,6 +21,14 @@ service:
       protocol: TCP
       targetPort: 443
       nodePort: 31443
+# One proxy (Traefik) sits in front and sets X-Forwarded-For from the PROXY protocol, so Envoy takes the client address
+# from that header (x-envoy-external-address, access logs). Merged with the chart's default pod annotations.
+# Set it back to 0 when the host's HAProxy sends traffic to the gateway directly (that step also needs the PROXY
+# protocol listener filter here, or every visitor appears as the node's IP).
+podAnnotations:
+  proxy.istio.io/config: |
+    gatewayTopology:
+      numTrustedProxies: 1
 # One replica, no HPA: small cluster, and metrics-server load should not decide gateway count.
 autoscaling:
   enabled: false

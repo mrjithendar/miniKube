@@ -16,6 +16,10 @@ spec:
     server: https://kubernetes.default.svc
     namespace: harbor
   syncPolicy:
+    automated:
+      enabled: true
+      prune: false
+      selfHeal: true
     syncOptions:
     - FailOnSharedResource=true
     - PruneLast=true

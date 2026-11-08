@@ -87,7 +87,7 @@ def test_application_pins_the_official_chart_and_reads_tools():
     assert values == {'repoURL': 'https://github.com/mrjithendar/miniKube.git', 'targetRevision': 'master', 'ref': 'values'}
     assert path['path'] == 'deploy/minikube/harbor/manifests'
     assert APP['spec']['destination'] == {'server': 'https://kubernetes.default.svc', 'namespace': 'harbor'}
-    assert 'automated' not in APP['spec']['syncPolicy']
+    assert APP['spec']['syncPolicy']['automated'] == {'enabled': True, 'prune': False, 'selfHeal': True}
     assert APP['metadata']['annotations']['argocd.argoproj.io/sync-options'] == 'Prune=false,Delete=false'
 
 

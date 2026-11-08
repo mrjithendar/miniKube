@@ -87,7 +87,8 @@ def validate(external=False):
         assert spec['project'] in projects
         project=projects[spec['project']]['spec']
         assert spec['destination']['namespace'] not in ('argocd','traefik')
-        assert 'automated' not in spec.get('syncPolicy',{}),name
+        auto=spec.get('syncPolicy',{}).get('automated') or {}
+        assert auto.get('enabled',True) and auto.get('prune') is False,f'{name}: needs automated sync with prune: false'
         assert 'FailOnSharedResource=true' in spec['syncPolicy']['syncOptions']
         for resource in render(app,external):
             kind=resource['kind'];meta=resource['metadata'];namespace=meta.get('namespace','')

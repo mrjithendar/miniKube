@@ -1,4 +1,4 @@
-"""Install cluster controllers in order; never implicitly deploy business apps."""
+"""Install Argo CD and its ingress after Terraform's add-ons; never implicitly deploy business apps."""
 import argparse
 import base64
 import os
@@ -13,10 +13,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = Path(os.environ.get('ROBOSHOP_AI_DIR', ROOT.parent / 'roboshop-ai')).resolve()
-# cert-manager is not here: minikube-infrastructure/ (Terraform) installs it with the other add-ons, after this.
-CONTROLLERS = (
-    ('traefik', 'https://traefik.github.io/charts', '42.0.0', 'traefik'),
-)
+# Traefik and cert-manager are not here: minikube-infrastructure/ (Terraform) installs them with the other add-ons,
+# before this script. The Argo CD ingress needs Traefik's IngressClass and Middleware CRD.
+TRAEFIK_PREREQUISITES = (('ingressclass', 'traefik'), ('crd', 'middlewares.traefik.io'))
 
 
 def refresh_pull_secrets(context):
@@ -128,8 +127,7 @@ def main():
         print('Create missing internal roboshop-secrets; preserve existing credentials.')
         print(f'Context {args.context}: refresh ECR credentials in managed namespaces (excluding kube-system).')
         if not args.pull_secrets_only:
-            print('Then Traefik -> Argo CD -> Argo CD ingress (cert-manager and the add-ons: minikube-infrastructure/)')
-        print('Existing Helm releases are reused; no upgrades or ownership adoption.')
+            print('Then Argo CD -> Argo CD ingress (Traefik, cert-manager and the add-ons come first: minikube-infrastructure/)')
         if args.schedule_pull_secrets:
             print('Install six-hour ECR refresh CronJob; requires AWS keys in roboshop-secrets.')
         if args.deploy_apps:
@@ -142,7 +140,7 @@ def main():
         return
     if args.pull_secrets_only and args.deploy_apps:
         parser.error('--pull-secrets-only cannot be combined with --deploy-apps')
-    for tool in (('aws', 'kubectl') if args.pull_secrets_only else ('aws', 'helm', 'kubectl')):
+    for tool in (('aws', 'kubectl') if args.pull_secrets_only else ('aws', 'helm', 'kubectl')):  # helm: deploy.py install
         if not shutil.which(tool):
             raise RuntimeError(f'{tool} is required')
     refresh_pull_secrets(args.context)
@@ -168,27 +166,15 @@ def main():
     def read(*parts):
         return subprocess.check_output(kube + list(parts), text=True)
     read('get', 'namespace', 'kube-system', '-o', 'name')
-    help_text = subprocess.check_output(['helm', 'list', '--help'], text=True)
-    flags = ['--all'] if re.search(r'(?m)^\s*(?:-a,\s*)?--all\s', help_text) else []
-    for name, repo, version, namespace in CONTROLLERS:
-        helm = ['helm', '--kube-context', args.context, '--namespace', namespace]
-        releases = json.loads(subprocess.check_output(helm + ['list', *flags, '--filter', f'^{name}$', '-o', 'json'], text=True))
-        if releases:
-            if releases[0]['status'] != 'deployed':
-                raise RuntimeError(f'{name}: existing release is not deployed; inspect helm status. No automatic replacement.')
-            print(f'Reusing {name}; version and values preserved.', flush=True)
-        else:
-            if read('get', 'ingressclass', name, '--ignore-not-found', '-o', 'name').strip():
-                raise RuntimeError(f'{name}: existing resources without the expected Helm release; refusing adoption.')
-            subprocess.check_call(helm + ['install', name, name, '--repo', repo, '--version', version,
-                '--create-namespace', '--values', str(ROOT / 'deploy/minikube' / name / 'values.yaml'),
-                '--wait', '--timeout', f'{args.timeout}s'])
-        subprocess.check_call(kube + ['-n', namespace, 'rollout', 'status', f'deployment/{name}', f'--timeout={args.timeout}s'])
+    for kind, name in TRAEFIK_PREREQUISITES:
+        if not read('get', kind, name, '--ignore-not-found', '-o', 'name').strip():
+            raise RuntimeError(f'{kind}/{name} not found: Traefik is a Terraform release. Run '
+                               'terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars first.')
     # Reuse the existing pinned, Helm-version-compatible Argo installer.
     subprocess.check_call([sys.executable, str(ROOT / 'scripts/argocd/deploy.py'), 'install', '--context', args.context, '--timeout', str(args.timeout)])
     subprocess.check_call(kube + ['apply', '-k', str(ROOT / 'deploy/minikube/argocd')])
-    print('Controllers and Argo CD ingress ready. Next: terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars '
-          '(cert-manager and the add-ons). Public HTTPS still requires host ports 80/443 and the shared certificate.')
+    print('Argo CD and its ingress are ready. Public HTTPS still requires host ports 80/443 (expose-ingress.sh) and the '
+          'shared certificate.')
     if args.deploy_apps:
         subprocess.check_call([sys.executable, str(ROOT / 'scripts/argocd/deploy.py'), '--context', args.context, '--timeout', str(args.timeout)])
 

@@ -6,6 +6,7 @@ only the AppProject `mk-platform` and the opt-in `harbor`.
 
 | File | Release | Chart | Namespace | Values / source |
 |---|---|---|---|---|
+| `traefik.tf` | `traefik` | traefik `traefik` 42.0.0 (v3.7) | `traefik` | `deploy/minikube/traefik/values.yaml`; the live release is imported, not reinstalled (`adopt_existing_traefik`, [details](../deploy/minikube/traefik/README.md)) |
 | `metrics-server.tf` | `metrics-server` | kubernetes-sigs `metrics-server` 3.14.0 | `kube-system` | `deploy/minikube/metrics-server/values.yaml` |
 | `cert-manager.tf` | `cert-manager` | `oci://quay.io/jetstack/charts/cert-manager` v1.20.4, CRDs included | `cert-manager` | `deploy/minikube/cert-manager/values.yaml` |
 | `letsencrypt.tf` | `letsencrypt-jithendar` | local `deploy/minikube/cert-manager/issuers` | `cert-manager` | ClusterIssuers `letsencrypt-dns`, `letsencrypt-dns-staging` (DNS-01, Cloudflare); Certificate `jithendar/jithendar-com-wildcard` for `jithendar.com` + `*.jithendar.com` |
@@ -18,7 +19,7 @@ only the AppProject `mk-platform` and the opt-in `harbor`.
 | `jaeger.tf` | `jaeger` | local `deploy/minikube/observability/jaeger` | `observability` | `jaeger.yaml` |
 
 `versions.tf` (providers, S3 backend), `variables.tf` (`kubeconfig_path` `~/.kube/config`, `kube_context` `mk4`,
-`helm_timeout` 600 s, `jithendar_com_dir` `../../jithendar.com`), `vars/mk4.tfvars`, `tests/` (`terraform test`
+`helm_timeout` 600 s, `jithendar_com_dir` `../../jithendar.com`, `adopt_existing_traefik` false; `true` in mk4.tfvars), `vars/mk4.tfvars`, `tests/` (`terraform test`
 with mock providers).
 
 The Loki, Jaeger, OpenTelemetry Collector and dashboard folders used to be Kustomize. They are local Helm charts now:
@@ -75,15 +76,15 @@ terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars
 Checks without a cluster: `terraform init -backend=false && terraform validate && terraform test`, and
 `python3 -m pytest tests` from the repository root (renders every local chart).
 
-Fresh cluster order: `./bootstrap-cluster.sh` (Traefik, whose Middleware CRD the Loki and Prometheus charts use, then
-Argo CD), then this root.
+Fresh cluster order: `./deploy-minikube.sh`, then this root (with `adopt_existing_traefik = false`; Traefik first,
+because the Loki and Prometheus charts use its Middleware CRD), then `./bootstrap-cluster.sh` (Argo CD and its ingress).
 
 ## CI
 
 | Workflow | When | Runner | Does |
 |---|---|---|---|
 | `.github/workflows/check-mk-infrastructure.yml` | pull requests touching this folder, `deploy/minikube/{cert-manager,istio,observability}`, the metrics-server values | GitHub-hosted, no secrets | fmt, validate, `terraform test`, `helm lint`/`template` of every local chart |
-| `.github/workflows/create-mk-infrastructure.yml` ("Deploy minikube infrastructure") | push to `master` (same paths), or by hand (`plan_only` to see drift) | GitHub-hosted, environment `mk4` | prerequisite checks (Traefik CRDs, no leftover Argo CD apps, Cloudflare Secret), fmt, validate, test, plan (in the run summary), apply, then checks all 12 releases are `deployed` and /grafana, /prometheus, /kiali answer |
+| `.github/workflows/create-mk-infrastructure.yml` ("Deploy minikube infrastructure") | push to `master` (same paths), or by hand (`plan_only` to see drift) | GitHub-hosted, environment `mk4` | prerequisite checks (no leftover Argo CD apps, Cloudflare Secret), fmt, validate, test, plan (in the run summary), apply, then checks all 13 releases are `deployed` and /grafana, /prometheus, /kiali answer |
 
 Both check out `miniKube` and `jithendar.com` (public, `grafana/` only) side by side, so `jithendar_com_dir` keeps its
 default. A dashboard change in jithendar.com does not trigger the deploy; run it by hand.
@@ -128,7 +129,7 @@ renders. `K="kubectl --context mk4"`. Keep backups outside `My Drive/Work`, whic
 | 3 | Delete the Applications (workloads stay): `$K -n argocd delete application metrics-server grafana prometheus loki otel-collector jaeger` | `$K get deploy -n monitoring; $K get deploy -n observability; $K top nodes` | grafana, prometheus, loki, alloy, jaeger, otel-collector still `1/1`; node metrics print |
 | 4 | Delete the emptied AppProjects and shrink `mk-platform`: `$K -n argocd delete appproject mk-observability logging` then `$K apply -f deploy/minikube/applications/project-mk-platform.yaml` | `$K -n argocd get appproject` | no `mk-observability`, no `logging`; `harbor` still in `mk-registry` |
 | 5 | Cloudflare token for DNS-01: `$K apply -f cloudflare-secrets.yaml` | `$K -n cert-manager get secret cloudflare-api-token` | exists |
-| 6 | `terraform -chdir=minikube-infrastructure init`, then `apply -var-file=vars/mk4.tfvars` | `helm --kube-context mk4 list -A` | 12 releases `deployed` (the `argocd` and `traefik` releases are not this root's) |
+| 6 | `terraform -chdir=minikube-infrastructure init`, then `apply -var-file=vars/mk4.tfvars` | `helm --kube-context mk4 list -A` | 13 releases `deployed`, `traefik` at a new revision (the `argocd` release is not this root's) |
 | 7 | Verify | `$K top pods -A \| head -3`; `$K -n istio-system get pods`; `$K get clusterissuer`; `$K -n jithendar get certificate jithendar-com-wildcard`; open /grafana/, /prometheus/, /kiali/ | metrics print; istiod and kiali Running; four issuers `True`; certificate `True` within a few minutes |
 | 8 | Remove the ConfigMaps Kustomize left behind (hash-suffixed names, no longer referenced): `$K -n monitoring get cm \| grep -E '^(loki\|alloy)-config-'`, `$K -n observability get cm \| grep -E '^(jaeger\|otel-collector)-config-'`, then delete those names | the same commands | empty |
 

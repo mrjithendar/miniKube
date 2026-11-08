@@ -1,6 +1,6 @@
 # Minikube (`mk4`)
 
-The self-hosted cluster: Argo CD hub, Traefik, and the Terraform-managed add-ons (cert-manager, Istio + Kiali, the monitoring stack). Every path below is from the repository root. Everything here stays on `mk4`; AWS and EKS resources belong in the [tools repository](https://github.com/mrjithendar/tools) (`deploy/eks`, `infrastructure`).
+The self-hosted cluster: Argo CD hub, and the Terraform-managed Traefik and add-ons (cert-manager, Istio + Kiali, the monitoring stack). Every path below is from the repository root. Everything here stays on `mk4`; AWS and EKS resources belong in the [tools repository](https://github.com/mrjithendar/tools) (`deploy/eks`, `infrastructure`).
 
 | Path | Contents | Applied by |
 |---|---|---|
@@ -8,7 +8,8 @@ The self-hosted cluster: Argo CD hub, Traefik, and the Terraform-managed add-ons
 | `applications/` | Argo CD catalog: AppProject `mk-platform`, opt-in Harbor | `./deploy-argocd.sh` |
 | `observability/` | Prometheus chart, Grafana values and dashboards chart, Loki and Alloy, OpenTelemetry collector, Jaeger (local Helm charts) | Terraform, [`minikube-infrastructure/`](../../minikube-infrastructure/README.md) |
 | `cert-manager/`, `metrics-server/`, `istio/` | cert-manager values and Let's Encrypt chart, metrics-server values, Istio and Kiali values | Terraform, `minikube-infrastructure/` |
-| `argocd/`, `traefik/`, `namespaces/` | Controller values and manifests | `./bootstrap-cluster.sh` |
+| `traefik/` | Traefik values ([README](traefik/README.md)) | Terraform, `minikube-infrastructure/traefik.tf` |
+| `argocd/`, `namespaces/` | Controller values and manifests | `./bootstrap-cluster.sh` |
 | `vault/`, `jfrog/`, `ecr-refresh/` | Optional components | Their own scripts and READMEs |
 | `harbor/` | Opt-in private registry ([README](harbor/README.md)) | Argo CD, `applications/optional/harbor.yaml`, by name only |
 | `examples/` | Templates. Nothing applies them. | By hand |
@@ -24,8 +25,8 @@ Docker, `kubectl` and Helm (`../tools/init.sh --profile minikube`, from the tool
 ```bash
 ../tools/init.sh --profile minikube
 ./deploy-minikube.sh                        # create or update the cluster
-./bootstrap-cluster.sh --context mk4        # Traefik, Argo CD and its ingress, ECR pull secrets
-terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars   # add-ons: cert-manager, Istio, Kiali, monitoring
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars   # Traefik, cert-manager, Istio, Kiali, monitoring
+./bootstrap-cluster.sh --context mk4        # Argo CD and its ingress, ECR pull secrets
 ./create-secrets.sh --context mk4 --apply   # missing credentials; never rotates existing ones
 ./deploy-argocd.sh --context mk4            # align and sync the catalog, without prune
 ```

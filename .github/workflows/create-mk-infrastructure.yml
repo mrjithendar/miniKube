@@ -1,6 +1,6 @@
 name: Create minikube infrastructure
 
-# Applies minikube-infrastructure/ (Helm releases on mk4: metrics-server, cert-manager, Let's Encrypt, Istio, Kiali,
+# Applies minikube-infrastructure/ (Helm releases on mk4: Traefik, metrics-server, cert-manager, Let's Encrypt, Istio, Kiali,
 # Prometheus, Grafana, Loki, OpenTelemetry Collector, Jaeger) on pushes to master, or by hand with "plan only" to see
 # drift. Pull requests are checked by check-mk-infrastructure.yml.
 # Off until repository variable MINIKUBE_TERRAFORM_APPLY is "true": set it after the one-time move of the live add-ons
@@ -24,6 +24,7 @@ on:
     paths:
       - 'minikube-infrastructure/**'
       - 'deploy/minikube/cert-manager/**'
+      - 'deploy/minikube/traefik/values.yaml'
       - 'deploy/minikube/metrics-server/values.yaml'
       - 'deploy/minikube/istio/**'
       - 'deploy/minikube/observability/**'
@@ -117,8 +118,6 @@ jobs:
       - name: Check prerequisites on mk4
         run: |
           set -euo pipefail
-          kubectl --request-timeout=20s get crd middlewares.traefik.io -o name \
-            || { echo "::error::Traefik CRDs missing: run ./bootstrap-cluster.sh first"; exit 1; }
           left=$(kubectl --request-timeout=20s -n argocd get applications -o name 2>/dev/null \
             | grep -E '/(metrics-server|grafana|prometheus|loki|otel-collector|jaeger|cert-manager)$' || true)
           [[ -z "$left" ]] || { echo "::error::Argo CD still owns: $left (minikube-infrastructure/README.md steps 1-4)"; exit 1; }
@@ -152,11 +151,11 @@ jobs:
         if: ${{ !inputs.plan_only }}
         run: |
           set -euo pipefail
-          # Only this root's releases: the argocd and traefik releases on mk4 belong to bootstrap-cluster.sh.
-          releases='^(metrics-server|cert-manager|letsencrypt-jithendar|istio-base|istiod|kiali|prometheus|grafana-dashboards|grafana|loki|otel-collector|jaeger)$'
+          # Only this root's releases: the argocd release on mk4 belongs to bootstrap-cluster.sh.
+          releases='^(traefik|metrics-server|cert-manager|letsencrypt-jithendar|istio-base|istiod|kiali|prometheus|grafana-dashboards|grafana|loki|otel-collector|jaeger)$'
           { echo '### Helm releases'; echo '```'; helm list -A --kube-context mk4 --filter "$releases"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           deployed=$(helm list -A --kube-context mk4 --filter "$releases" --deployed -q | wc -l)
-          [[ "$deployed" -eq 12 ]] || { echo "::error::$deployed of 12 releases deployed"; helm list -A --kube-context mk4 --filter "$releases"; exit 1; }
+          [[ "$deployed" -eq 13 ]] || { echo "::error::$deployed of 13 releases deployed"; helm list -A --kube-context mk4 --filter "$releases"; exit 1; }
           # A freshly started pod (Kiali warms its caches) and a new Traefik route answer 503 for a while: retry for 3 min.
           for path in grafana/api/health prometheus/-/ready kiali/; do
             for attempt in $(seq 1 18); do

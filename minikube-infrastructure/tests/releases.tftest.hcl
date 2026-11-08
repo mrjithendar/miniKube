@@ -3,11 +3,17 @@ mock_provider "helm" {}
 mock_provider "kubernetes" {}
 mock_provider "random" {}
 
+# Mock providers cannot import, and vars/mk4.tfvars adopts the live Traefik release (traefik.tf). Plan a fresh install.
+variables {
+  adopt_existing_traefik = false
+}
+
 run "pinned_releases" {
   command = plan
 
   assert {
     condition = (
+      helm_release.traefik.version == "42.0.0" &&
       helm_release.metrics_server.version == "3.14.0" &&
       helm_release.cert_manager.version == "v1.20.4" &&
       helm_release.istio_base.version == helm_release.istiod.version &&
@@ -20,6 +26,7 @@ run "pinned_releases" {
 
   assert {
     condition = (
+      helm_release.traefik.namespace == "traefik" &&
       helm_release.metrics_server.namespace == "kube-system" &&
       helm_release.cert_manager.namespace == "cert-manager" &&
       helm_release.letsencrypt.namespace == "cert-manager" &&

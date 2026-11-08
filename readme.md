@@ -13,8 +13,8 @@ the AWS account (`infrastructure/`), EKS (`deploy/eks/`), the labauto installers
 ```bash
 ../tools/init.sh --profile minikube   # host prerequisites: Docker, kubectl, Helm, Minikube (tools repository)
 ./deploy-minikube.sh                  # create the cluster
-./bootstrap-cluster.sh                # Traefik, Argo CD, ECR pull secrets
-terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars   # add-ons (minikube-infrastructure/README.md)
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars   # Traefik and the add-ons (minikube-infrastructure/README.md)
+./bootstrap-cluster.sh                # Argo CD and its ingress, ECR pull secrets
 ./create-secrets.sh --apply           # missing installation credentials
 ./deploy-argocd.sh roboshop           # register and sync the RoboShop applications
 ```
@@ -24,10 +24,9 @@ Every entry point can run from any directory, and most accept `--help`.
 | Command | Does |
 |---|---|
 | `./deploy-minikube.sh` | Create or update the Minikube cluster (`deploy/minikube/install.sh`). `install` hands off to `../tools/init.sh` (or `TOOLS_DIR`). |
-| `./bootstrap-cluster.sh` | Install Traefik with Helm, then Argo CD and its ingress; refresh ECR pull secrets. `--schedule-pull-secrets` adds a six-hourly refresh CronJob ([details](deploy/minikube/ecr-refresh/README.md)). |
+| `./bootstrap-cluster.sh` | Install Argo CD and its ingress (after Terraform has installed Traefik); refresh ECR pull secrets. `--schedule-pull-secrets` adds a six-hourly refresh CronJob ([details](deploy/minikube/ecr-refresh/README.md)). |
 | `./create-secrets.sh [--apply] [--all]` | Create missing installation credentials. Never rotates existing ones. |
 | `./deploy-argocd.sh [app\|all\|roboshop\|list\|status]` | Register and sync Argo CD Applications. |
-| `./deploy-traefik.sh` | Install or upgrade Traefik on its own (`deploy/minikube/deploy-traefik.sh`). |
 | `./harbor-pull-secret.sh [context]` | Create or rotate Secret `harbor-pull` (registry.jithendar.com) in every active namespace. |
 | `scripts/setup-minikube-terraform-ci.sh` | One-time access for the Terraform workflow ([minikube-infrastructure/README.md](minikube-infrastructure/README.md#ci)). |
 | `scripts/data/seed-minikube-demo.py` | Opt-in synthetic demo data. |
@@ -50,7 +49,7 @@ Less common operations in `deploy/minikube/`:
 | Path | Contents |
 |---|---|
 | `deploy/minikube/` | Cluster scripts and per-component config: [argocd](deploy/minikube/argocd/README.md), [cert-manager](deploy/minikube/cert-manager/README.md), [traefik](deploy/minikube/traefik/README.md), [vault](deploy/minikube/vault/README.md), [jfrog](deploy/minikube/jfrog/README.md), [harbor](deploy/minikube/harbor/README.md), [metrics-server](deploy/minikube/metrics-server/README.md), [ecr-refresh](deploy/minikube/ecr-refresh/README.md), `namespaces/`, the [Argo CD catalog](deploy/minikube/applications/README.md) and [observability](deploy/minikube/observability/README.md). [Commands](deploy/minikube/README.md). |
-| `minikube-infrastructure/` | Terraform root for the add-ons, one `helm_release` per file ([details](minikube-infrastructure/README.md)). |
+| `minikube-infrastructure/` | Terraform root for Traefik and the add-ons, one `helm_release` per file ([details](minikube-infrastructure/README.md)). |
 | `scripts/argocd/` | `bootstrap.py`, `deploy.py`, and `validate.py` (renders the whole catalog and checks ownership). |
 | `scripts/setup/` | `create_secrets.py` and [SECRETS.md](scripts/setup/SECRETS.md). |
 | `scripts/lib/` | Shared helpers: supported-host check, Argo CD ownership check, repository paths. |

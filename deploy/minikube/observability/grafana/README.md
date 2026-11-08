@@ -8,10 +8,8 @@
 From the repository root on the Minikube host:
 
 ```bash
-bash deploy/minikube/deploy-traefik.sh
-bash deploy/minikube/expose-ingress.sh  # On the Vultr Linux host only
-bash deploy/minikube/deploy-cert-manager.sh
-bash deploy/minikube/deploy-grafana.sh
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars   # Traefik, cert-manager, Grafana and the rest
+bash deploy/minikube/expose-ingress.sh  # on the mk4 Linux host only
 ```
 
 Requires Helm, kubectl, a running cluster, the **Traefik ingress controller**, and a default StorageClass (Minikube normally supplies one). DNS for `jithendar.com` must resolve to your server; public ports **80 and 443 must reach Traefik inside Minikube**. A private Minikube IP or NodePort alone does not provide this routing. The [Traefik setup scripts](../../traefik/README.md) install the controller and configure host forwarding. They do not modify the Vultr firewall. Keep port 80 reachable for automatic certificate renewal.
@@ -69,7 +67,7 @@ kubectl -n jithendar describe certificate jithendar-com
 kubectl get ingressclass,storageclass
 ```
 
-- **Missing Traefik:** run `deploy-traefik.sh`, then `expose-ingress.sh` on Vultr; an IngressClass object alone cannot route traffic.
+- **Missing Traefik:** apply `minikube-infrastructure/` (Traefik is `traefik.tf`), then `expose-ingress.sh` on the host; an IngressClass object alone cannot route traffic.
 - **PVC Pending:** check the default StorageClass and Minikube storage-provisioner addon; inspect PVC events.
 - **Certificate Pending:** inspect Challenge events; verify DNS (including any AAAA record), inbound port 80 and the issuer's Traefik HTTP-01 solver.
 - **Timeout from the browser:** check Vultr and host firewalls, and host port 443 forwarding to Traefik. Kubeconfig API access is separate from website access.

@@ -35,7 +35,7 @@ kubectl --context="$PROFILE" -n traefik rollout status deployment/traefik --time
 # HAProxy sends the PROXY protocol (real client IPs for Traefik's IP allowlists and the apps' logs). Traefik must
 # already accept it (traefik/values.yaml, proxyProtocol.trustedIPs), or every connection would fail.
 kubectl --context="$PROFILE" -n traefik get deployment traefik -o jsonpath='{.spec.template.spec.containers[0].args}' \
-  | grep -q 'websecure.proxyProtocol.trustedIPs' || fail 'Traefik does not accept the PROXY protocol yet: run deploy-traefik.sh first.'
+  | grep -q 'websecure.proxyProtocol.trustedIPs' || fail 'Traefik does not accept the PROXY protocol yet: apply minikube-infrastructure/ (traefik.tf) first.'
 name="roboshop-ingress-edge-$(id -u)"
 label='roboshop.minikube.ingress-owner'
 config_dir="$state_dir/ingress-edge"

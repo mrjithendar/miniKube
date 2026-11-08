@@ -10,4 +10,7 @@ resource "helm_release" "loki" {
   take_ownership = true
   wait           = true
   timeout        = var.helm_timeout
+
+  # Its Middleware objects (traefik.io/v1alpha1) need the CRDs the Traefik chart installs.
+  depends_on = [helm_release.traefik]
 }

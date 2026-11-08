@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy persistent Vault using Helm, just like deploy-traefik.sh.
+# Deploy persistent Vault using Helm.
 # Never initialize, unseal, rotate credentials or remove persistent data here.
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 set -euo pipefail

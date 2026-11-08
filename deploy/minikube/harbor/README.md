@@ -50,7 +50,7 @@ Client → Cloudflare DNS (**DNS only**) → host HAProxy (TCP, PROXY protocol, 
   grey-clouded.
 - **Traefik read timeout.** Traefik v3 must read the whole request, body included, within
   `respondingTimeouts.readTimeout`, which defaults to 60s. `../traefik/values.yaml` raises it to 900s on
-  `websecure`. That is a values change to the existing controller and takes `deploy-traefik.sh` to apply (see Prerequisites).
+  `websecure`. That is a values change to the existing controller, applied by Terraform (`minikube-infrastructure/traefik.tf`; see Prerequisites).
 - **No body-size limit.** Traefik has none by default, and the chart's ingress-nginx annotations are removed.
 - **Redirects.** With filesystem storage the registry serves blobs itself; nothing redirects to object storage.
   The token realm is `externalURL`, so clients fetch tokens from `https://registry.jithendar.com/service/token`.
@@ -83,9 +83,9 @@ Each is a setting this repository did not have before.
 
 1. **DNS.** In Cloudflare, an A record `registry.jithendar.com → 46.224.38.14`, **DNS only**. No AAAA record
    (jithendar.com has none). cert-manager's HTTP-01 challenge needs it before the first sync.
-2. **Traefik timeout.** Apply `../traefik/values.yaml` with `./deploy-traefik.sh --context mk4`, or `helm upgrade`
-   it some other way. The live release `traefik/traefik` is at revision 2 with status `failed`
-   (`helm --kube-context mk4 -n traefik history traefik`); find out why before upgrading over it.
+2. **Traefik timeout.** `terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars` applies
+   `../traefik/values.yaml`. Its first run imports the live release `traefik/traefik` (revision 2, `failed`:
+   context canceled on 2026-11-04) and upgrades it in place; see [../traefik/README.md](../traefik/README.md).
 3. **Docker Hub.** Two access tokens: one with write access to `jithendar/custom-harbour` for the build, and a
    read-only one for mk4 to pull with. `deploy-harbor.sh` asks for the read-only one once and stores it as
    `harbor/dockerhub-pull`.
@@ -340,8 +340,8 @@ kubectl --context mk4 -n harbor get secret harbor-credentials -o json |
 Harbor's own images come from `jithendar/custom-harbour` and the database and Redis images from public Docker Hub,
 so none of this needs Harbor.
 
-1. Rebuild the cluster as usual: `./deploy-minikube.sh`, `./bootstrap-cluster.sh --context mk4` (cert-manager,
-   Traefik, Argo CD, ECR pull secrets), and re-apply the Traefik timeout (Prerequisites).
+1. Rebuild the cluster as usual: `./deploy-minikube.sh`, `terraform -chdir=minikube-infrastructure apply` (Traefik with
+   its timeout, cert-manager and the add-ons), then `./bootstrap-cluster.sh --context mk4` (Argo CD, ECR pull secrets).
 2. `kubectl --context mk4 apply -f deploy/minikube/namespaces/harbor.yaml`, then apply the saved
    `harbor-credentials.json` and recreate `harbor-backup-r2`. Restore `harbor-credentials` **before** anything
    else: `create-secrets.sh` would otherwise generate a new one, which cannot decrypt the restored data.

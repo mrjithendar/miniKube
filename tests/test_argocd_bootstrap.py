@@ -21,22 +21,34 @@ def test_preview_is_offline():
     write.assert_not_called()
 
 
+TRAEFIK_PRESENT = ['namespace/kube-system', 'ingressclass.networking.k8s.io/traefik',
+                   'customresourcedefinition.apiextensions.k8s.io/middlewares.traefik.io']
+
+
 def test_fresh_install_order_and_context():
-    with patch('sys.argv', ['bootstrap', '--context', 'fresh', '--deploy-apps']), patch.object(bootstrap.shutil, 'which', return_value='/bin/tool'), patch.object(bootstrap.subprocess, 'check_output', side_effect=['namespace/kube-system', '--all-namespaces', '[]', '']), patch.object(bootstrap.subprocess, 'check_call') as write:
+    with patch('sys.argv', ['bootstrap', '--context', 'fresh', '--deploy-apps']), patch.object(bootstrap.shutil, 'which', return_value='/bin/tool'), patch.object(bootstrap.subprocess, 'check_output', side_effect=TRAEFIK_PRESENT) as read, patch.object(bootstrap.subprocess, 'check_call') as write:
         bootstrap.main()
     commands = [call.args[0] for call in write.call_args_list]
-    installs = [c for c in commands if c[0] == 'helm']
-    # cert-manager is a Terraform release (minikube-infrastructure/cert-manager.tf), never installed here.
-    assert [c[c.index('install') + 1] for c in installs] == ['traefik']
-    assert all('--all' not in c for c in installs)
-    argo = next(i for i,c in enumerate(commands) if 'install' in c and c[0] != 'helm')
-    assert argo > commands.index(installs[-1])
+    # Traefik and cert-manager are Terraform releases (minikube-infrastructure/), never installed here.
+    assert not [c for c in commands if c[0] == 'helm']
+    assert [c for c in commands if 'install' in c][0][1].endswith('scripts/argocd/deploy.py')
+    assert commands[1][-2:] == ['-k', str(bootstrap.ROOT / 'deploy/minikube/argocd')]
     assert 'install' not in commands[-1]
-    assert all('fresh' in c for c in commands)
+    assert all('fresh' in c for c in commands + [call.args[0] for call in read.call_args_list])
+
+
+@pytest.mark.parametrize('missing', [1, 2])
+def test_missing_traefik_stops_before_argo_cd(missing):
+    found = list(TRAEFIK_PRESENT)
+    found[missing] = ''
+    with patch('sys.argv', ['bootstrap']), patch.object(bootstrap.shutil, 'which', return_value='/bin/tool'), patch.object(bootstrap.subprocess, 'check_output', side_effect=found), patch.object(bootstrap.subprocess, 'check_call') as write:
+        with pytest.raises(RuntimeError, match='Traefik is a Terraform release'):
+            bootstrap.main()
+    write.assert_not_called()
 
 
 def test_install_failure_stops_later_stages():
-    with patch('sys.argv', ['bootstrap', '--deploy-apps']), patch.object(bootstrap.shutil, 'which', return_value='/bin/tool'), patch.object(bootstrap.subprocess, 'check_output', side_effect=['namespace', '', '[]', '']), patch.object(bootstrap.subprocess, 'check_call', side_effect=bootstrap.subprocess.CalledProcessError(1, 'helm')) as write:
+    with patch('sys.argv', ['bootstrap', '--deploy-apps']), patch.object(bootstrap.shutil, 'which', return_value='/bin/tool'), patch.object(bootstrap.subprocess, 'check_output', side_effect=TRAEFIK_PRESENT), patch.object(bootstrap.subprocess, 'check_call', side_effect=bootstrap.subprocess.CalledProcessError(1, 'deploy.py')) as write:
         with pytest.raises(bootstrap.subprocess.CalledProcessError):
             bootstrap.main()
     assert write.call_count == 1

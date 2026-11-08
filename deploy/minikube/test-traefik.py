@@ -1,4 +1,5 @@
-"""Mock installer commands without touching a cluster or Docker daemon."""
+"""Mock host commands without touching a cluster or Docker daemon. Traefik itself is a Terraform release
+(minikube-infrastructure/traefik.tf); these cover only the host-side forwarding."""
 import os
 from pathlib import Path
 import subprocess
@@ -29,7 +30,7 @@ class TraefikTests(unittest.TestCase):
         state.mkdir(parents=True)
         (state / 'mk4.profile').write_text('mk4-selected\n')
         self.env = {k: v for k, v in os.environ.items() if k not in (
-            'KUBE_CONTEXT', 'PROFILE', 'MINIKUBE_HOME', 'TRAEFIK_CHART_VERSION')}
+            'KUBE_CONTEXT', 'PROFILE', 'MINIKUBE_HOME')}
         self.env.update(HOME=str(self.home), TEST_LOG=str(self.home / 'calls'),
                         PATH=f'{bindir}:/usr/bin:/bin')
 
@@ -39,22 +40,6 @@ class TraefikTests(unittest.TestCase):
             '/usr/local/bin:$HOME/.local/bin:$PATH', '$HOME/.local/bin:$PATH'))
         return subprocess.run(['bash', str(script)], env={**self.env, **env},
                               capture_output=True, text=True)
-
-    def test_selected_profile_and_pinned_chart(self):
-        result = self.run_script('deploy-traefik.sh')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        calls = (self.home / 'calls').read_text()
-        self.assertIn('--kube-context=mk4-selected upgrade --install traefik', calls)
-        self.assertIn('--version 42.0.0', calls)
-        self.assertIn('--namespace traefik', calls)
-        self.assertIn('get ingressclass traefik', calls)
-
-    def test_failed_api_prevents_install(self):
-        result = self.run_script('deploy-traefik.sh', API_EXIT='1', KUBE_CONTEXT='remote')
-        self.assertNotEqual(result.returncode, 0)
-        calls = (self.home / 'calls').read_text()
-        self.assertIn('--context=remote', calls)
-        self.assertNotIn('helm ', calls)
 
     def test_mac_cannot_publish_host_ports(self):
         result = self.run_script('expose-ingress.sh')

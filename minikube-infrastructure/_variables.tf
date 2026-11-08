@@ -26,3 +26,9 @@ variable "jithendar_com_dir" {
   type        = string
   default     = "../../jithendar.com"
 }
+
+variable "adopt_existing_traefik" {
+  description = "Import the Helm release traefik/traefik that bootstrap-cluster.sh installed before Terraform managed Traefik. false on a fresh cluster."
+  type        = bool
+  default     = false
+}

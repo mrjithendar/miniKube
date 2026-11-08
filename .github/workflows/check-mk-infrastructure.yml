@@ -8,6 +8,7 @@ on:
     paths:
       - 'minikube-infrastructure/**'
       - 'deploy/minikube/cert-manager/**'
+      - 'deploy/minikube/traefik/values.yaml'
       - 'deploy/minikube/metrics-server/values.yaml'
       - 'deploy/minikube/istio/**'
       - 'deploy/minikube/observability/**'

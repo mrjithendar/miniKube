@@ -114,5 +114,5 @@ resource "helm_release" "istio_edge" {
 
   # Gateway/EnvoyFilter/AuthorizationPolicy (istio-base CRDs, a running gateway), Certificate (cert-manager and
   # ClusterIssuer letsencrypt-dns), and while Traefik runs, IngressRoute/ServersTransport (Traefik's CRDs).
-  depends_on = [helm_release.istio_ingressgateway, helm_release.letsencrypt, helm_release.traefik]
+  depends_on = [helm_release.istio_ingressgateway, helm_release.letsencrypt]
 }

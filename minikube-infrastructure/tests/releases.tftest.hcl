@@ -18,9 +18,11 @@ mock_provider "kubernetes" {
 }
 mock_provider "random" {}
 
-# Mock providers cannot import, and vars/mk4.tfvars adopts the live Traefik release (traefik.tf). Plan a fresh install.
+# Mock providers cannot import, so never adopt the live Traefik release (traefik.tf); plan a fresh install. The runs
+# below assume Traefik is installed whatever vars/mk4.tfvars says; "without_traefik" covers traefik_enabled = false.
 variables {
   adopt_existing_traefik = false
+  traefik_enabled        = true
 }
 
 run "pinned_releases" {

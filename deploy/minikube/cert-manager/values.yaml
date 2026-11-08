@@ -7,6 +7,10 @@ resources:
   requests: {cpu: 20m, memory: 64Mi}
   limits: {cpu: 500m, memory: 256Mi}
 webhook:
+  # No sidecar: the API server calls the webhook directly on every cert-manager resource change, and a proxy that is
+  # not ready yet would fail those calls. The controller and cainjector are meshed (namespace label).
+  podLabels:
+    sidecar.istio.io/inject: "false"
   resources:
     requests: {cpu: 10m, memory: 32Mi}
     limits: {cpu: 250m, memory: 128Mi}

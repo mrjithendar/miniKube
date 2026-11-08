@@ -4,3 +4,4 @@ resources:
 - argocd-https-middleware.yaml
 - argocd-ingress.yaml
 - argocd-http-ingress.yaml
+- istio-sidecars-networkpolicy.yaml

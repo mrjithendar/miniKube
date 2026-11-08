@@ -306,4 +306,6 @@ def test_all_catalog_destinations_have_namespace_manifests():
     for app in deploy.catalog()[0].values():
         namespace = app['spec']['destination']['namespace']
         doc = deploy.yaml.safe_load((deploy.ROOT / 'deploy/minikube/namespaces' / f'{namespace}.yaml').read_text())
-        assert doc == {'apiVersion':'v1', 'kind':'Namespace', 'metadata':{'name':namespace}}
+        assert doc in ({'apiVersion':'v1', 'kind':'Namespace', 'metadata':{'name':namespace}},
+                       {'apiVersion':'v1', 'kind':'Namespace', 'metadata':{'name':namespace, 'labels':{'istio-injection':'enabled'}}})
+

@@ -101,7 +101,7 @@ def test_project_allows_only_the_harbor_namespace():
 
 def test_namespace_manifest_matches_deploy_contract():
     assert yaml.safe_load((ROOT / 'deploy/minikube/namespaces/harbor.yaml').read_text()) == \
-        {'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': 'harbor'}}
+        {'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': 'harbor', 'labels': {'istio-injection': 'enabled'}}}
 
 
 def test_one_hostname_everywhere():

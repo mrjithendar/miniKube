@@ -12,6 +12,9 @@ spec:
     metadata:
       labels: {app: roboshop-prometheus}
       annotations:
+        # Meshed for the Kiali graph (Grafana, Kiali and Traefik calling Prometheus), but scrapes leave directly: they go
+        # to pod IPs, which the sidecar would only pass through, and STRICT ports must be reached plain (moks :9464).
+        traffic.sidecar.istio.io/includeOutboundIPRanges: ""
         checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
     spec:
       {{- with .Values.nodeSelector }}

@@ -183,8 +183,11 @@ def main():
             raise RuntimeError(f'{name}: remote destination requires namespace setup on its own cluster')
         namespace = destination['namespace']
         manifest = ROOT / 'deploy/minikube/namespaces' / f'{namespace}.yaml'
-        if not manifest.is_file() or yaml.safe_load(manifest.read_text()) != {
-                'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': namespace}}:
+        # The name, plus at most the Istio sidecar label (Kiali traffic graph); nothing else is owned here.
+        doc = yaml.safe_load(manifest.read_text()) if manifest.is_file() else None
+        allowed = ({'name': namespace}, {'name': namespace, 'labels': {'istio-injection': 'enabled'}})
+        if not isinstance(doc, dict) or doc.get('apiVersion') != 'v1' or doc.get('kind') != 'Namespace' \
+                or set(doc) != {'apiVersion', 'kind', 'metadata'} or doc['metadata'] not in allowed:
             raise RuntimeError(f'{name}: missing or invalid namespace manifest for {namespace}')
         namespace_files.add(manifest)
     for manifest in sorted(namespace_files):

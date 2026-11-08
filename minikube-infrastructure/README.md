@@ -6,13 +6,13 @@ only the AppProject `mk-platform` and the opt-in `harbor`.
 
 | File | Release | Chart | Namespace | Values / source |
 |---|---|---|---|---|
-| `traefik.tf` | `traefik` | traefik `traefik` 42.0.0 (v3.7) | `traefik` | `deploy/minikube/traefik/values.yaml`; the live release is imported, not reinstalled (`adopt_existing_traefik`, [details](../deploy/minikube/traefik/README.md)) |
+| `traefik.tf` | `traefik` (only while `traefik_enabled`) | traefik `traefik` 42.0.0 (v3.7) | `traefik` | Being retired ([Leaving Traefik](../deploy/minikube/istio/README.md#leaving-traefik-once-in-this-order)); `deploy/minikube/traefik/values.yaml`; the live release is imported, not reinstalled (`adopt_existing_traefik`) |
 | `metrics-server.tf` | `metrics-server` | kubernetes-sigs `metrics-server` 3.14.0 | `kube-system` | `deploy/minikube/metrics-server/values.yaml` |
 | `cert-manager.tf` | `cert-manager` | `oci://quay.io/jetstack/charts/cert-manager` v1.20.4, CRDs included | `cert-manager` | `deploy/minikube/cert-manager/values.yaml` |
 | `letsencrypt.tf` | `letsencrypt-jithendar` | local `deploy/minikube/cert-manager/issuers` | `cert-manager` | ClusterIssuers `letsencrypt-dns`, `letsencrypt-dns-staging` (DNS-01, Cloudflare); Certificate `jithendar/jithendar-com-wildcard` for `jithendar.com` + `*.jithendar.com` |
 | `istio.tf` | `istio-base`, `istio-cni`, `istiod` | istio-release `base`, `cni`, `istiod` 1.30.7 | `istio-system` | `deploy/minikube/istio/istiod.yaml` |
 | `istio.tf` | `istio-ingressgateway` | istio-release `gateway` 1.30.7 | `istio-ingress` | `deploy/minikube/istio/ingressgateway.yaml`; NodePort 31080 (HTTP) / 31443 (HTTPS), not forwarded from the host |
-| `istio.tf` | `istio-edge` | local `deploy/minikube/istio/edge` | `istio-ingress` | Gateway `jithendar-com` + Certificate (DNS-01) `jithendar-com-gateway-tls`, EnvoyFilter `response-compression`, Traefik IngressRoutes `istio-handoff-http(s)` (priority 1) that pass jithendar.com/www from Traefik to the gateway. Migration steps in the chart's `values.yaml` |
+| `istio.tf` | `istio-edge` | local `deploy/minikube/istio/edge` | `istio-ingress` | mk4's public edge: Gateway `public`, wildcard certificate, the jithendar.com routing table, logins (from Secret `gateway-basic-auth`), read-only /opensearch, PROXY protocol, compression; Traefik hand-off while `traefik_enabled` ([README](../deploy/minikube/istio/README.md)) |
 | `kiali.tf` | `kiali` | kiali `kiali-server` 2.34.0 | `istio-system` | `deploy/minikube/istio/kiali.yaml`; Secret `kiali-signing-key` |
 | `prometheus.tf` | `prometheus` | local `deploy/minikube/observability/prometheus` | `monitoring` | chart `values.yaml` |
 | `grafana.tf` | `grafana-dashboards`, `grafana` | local `deploy/minikube/observability/grafana/dashboards`; grafana-community `grafana` 14.0.1 | `monitoring` | `deploy/minikube/observability/grafana/values.yaml`; dashboards from `./dashboards` and `../jithendar.com/grafana` |
@@ -31,12 +31,12 @@ ConfigMap with a fixed name (`loki-config`, `alloy-config`, `jaeger-config`, `ot
 
 ## Public routes
 
-All through Traefik on `jithendar.com`, TLS from Traefik's default certificate (the jithendar.com TLSStore).
+All through the Istio gateway on `jithendar.com` (routing table and logins: `deploy/minikube/istio/edge`), TLS from its wildcard certificate.
 
 | URL | Sign-in |
 |---|---|
 | https://jithendar.com/grafana/ | Grafana admin from Secret `monitoring/monitoring-auth` |
-| https://jithendar.com/prometheus/ | basic auth, same Secret |
+| https://jithendar.com/prometheus/ | basic auth on the gateway, same Secret (`scripts/istio/gateway-basic-auth.py`) |
 | https://jithendar.com/kiali/ | ServiceAccount token, view only (below) |
 | https://jithendar.com/loki/api/v1/{query_range,labels,label/…,format_query} | basic auth, Secret `monitoring/loki-read-auth` |
 | https://jithendar.com/loki/api/v1/push | basic auth, Secret `monitoring/loki-push-auth` |
@@ -59,9 +59,8 @@ issuance; it was not on mk4 on 2026-11-08. The git-ignored `cloudflare-secrets.y
 accounts and the Certificate stays `False` until the Secret appears.
 
 The existing `letsencrypt-prod` / `letsencrypt-staging` (HTTP-01) stay in the jithendar.com repository
-(`minikube/45-jithendar-letsencrypt.yaml`) and keep issuing `jithendar/jithendar-com` (`jithendar.com`,
-`www.jithendar.com`). Traefik serves the wildcard only once something names its Secret: switch the jithendar.com
-TLSStore (`minikube/55-tlsstore.yaml`) to `jithendar-com-wildcard-tls` after the Certificate is `True`.
+(`minikube/45-jithendar-letsencrypt.yaml`) only for Traefik's own certificate, until Traefik is uninstalled. The Istio
+gateway's wildcard certificate (`istio-ingress/jithendar-com`, edge chart) uses `letsencrypt-dns`.
 
 ## Commands
 

@@ -37,21 +37,22 @@ and `expose.ingress.hosts.core` in `values.yaml` and the hostnames in `manifests
 | Every credential in `harbor/harbor-credentials`, created by `./create-secrets.sh` | Anything the chart generates (`randAlphaNum`, `genCA`) would change on every Argo CD sync. The Redis password is spliced into each component's Redis URL at runtime (`$(REDIS_PASSWORD)`), because the chart's `existingSecret` for Redis needs Helm `lookup`. |
 | Token-signing key from cert-manager (self-signed, 10 years, never rotated) | Same reason; cert-manager already owns TLS keys here. |
 | Everything on `mk4-m05` | Volumes are minikube hostPath, which exist only on one node. m02–m04 already hold the other databases. |
-| Chart ingress on Traefik, no Harbor nginx | Traefik is mk4's controller (Kong is on an unmerged branch). |
+| Istio gateway straight to core and portal (`manifests/harbor-virtualservice.yaml`), `expose.type: clusterIP`, no Harbor nginx | The gateway is mk4's edge (`../istio/README.md`). The chart has no "no ingress" mode; clusterIP renders no Ingress, and its nginx stays at 0 replicas (no arm64 build). |
 | Trivy and the metrics exporter off | Memory. The exporter image also hard-codes `GOARCH=amd64`. |
 
 ### Request path for push and pull
 
-Client → Cloudflare DNS (**DNS only**) → host HAProxy (TCP, PROXY protocol, 1 h idle timeouts) → Traefik
-`websecure` → Harbor core → registry → filesystem volume.
+Client → Cloudflare DNS (**DNS only**) → host HAProxy (TCP, PROXY protocol, 1 h idle timeouts) → Istio gateway
+(Gateway `public`, wildcard certificate) → Harbor core → registry → filesystem volume. Until Traefik is uninstalled
+(`../istio/README.md`, "Leaving Traefik"), Traefik sits between HAProxy and the gateway.
 
 - **No Cloudflare proxy.** jithendar.com is served DNS-only (no `cf-ray` header). Proxied requests are capped
   at 100 MB on Cloudflare's Free and Pro plans, and Docker sends each layer as one request. Keep the new record
   grey-clouded.
-- **Traefik read timeout.** Traefik v3 must read the whole request, body included, within
-  `respondingTimeouts.readTimeout`, which defaults to 60s. `../traefik/values.yaml` raises it to 900s on
-  `websecure`. That is a values change to the existing controller, applied by Terraform (`minikube-infrastructure/traefik.tf`; see Prerequisites).
-- **No body-size limit.** Traefik has none by default, and the chart's ingress-nginx annotations are removed.
+- **No route timeout.** The VirtualService sets none, which is Istio's "no deadline": a 1 GB layer at 10 MB/s takes
+  100 s, and Envoy streams the body instead of reading it whole. While Traefik is still in front, its 900s read timeout
+  (`../traefik/values.yaml`) applies too.
+- **No body-size limit.** Envoy streams request bodies; nothing on the route buffers them.
 - **Redirects.** With filesystem storage the registry serves blobs itself; nothing redirects to object storage.
   The token realm is `externalURL`, so clients fetch tokens from `https://registry.jithendar.com/service/token`.
 - **From inside mk4.** A pod resolved jithendar.com to 46.224.38.14 and completed HTTPS to it (hairpin through

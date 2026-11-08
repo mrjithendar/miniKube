@@ -16,9 +16,9 @@ included. Docker builds images; JFrog stores the results.
 - Docker registry host: **jfrog.jithendar.com** (no `/jfrog` login suffix).
 - Persistence: 30 GiB artifact PVC plus 10 GiB PostgreSQL PVC, using the default
   storage class. Minikube local storage is development storage, not HA storage.
-- TLS: one Certificate `jfrog/jfrog-public`, Secret `jfrog-public-tls`, covering
-  both hosts. Existing WordPress/monitoring/RoboShop certificates are untouched.
-- The chart's NGINX is private ClusterIP HTTP behind Traefik's public HTTPS.
+- TLS: the Istio gateway's wildcard certificate (`*.jithendar.com`); jithendar.com/jfrog redirects to
+  https://jfrog.jithendar.com/ui/ (the gateway's routing table).
+- The chart's NGINX is private ClusterIP HTTP behind the Istio gateway's public HTTPS (`jfrog-virtualservice.yaml`; the gateway's wildcard certificate covers jfrog.jithendar.com, so no Certificate here).
 
 ## Prerequisites
 
@@ -34,8 +34,8 @@ check `kubectl describe nodes`. Do not wipe existing database volumes to resize.
 
 Create a DNS **A record `jfrog.jithendar.com` → your Vultr public IPv4 address**.
 If you publish AAAA, it must route to this same ingress over IPv6. Keep
-`jithendar.com` pointing to the same ingress. Public ports 80/443, Traefik,
-cert-manager, `letsencrypt-prod`, Helm, kubectl and Python 3 are required.
+`jithendar.com` pointing to the same ingress. Public ports 80/443, the Istio edge
+(`../istio/README.md`), Helm, kubectl and Python 3 are required.
 No paid JFrog license or external database account is needed.
 
 ## Install
@@ -124,7 +124,7 @@ kubectl -n jfrog get certificaterequest,order,challenge
 - **Certificate pending:** check DNS for BOTH names and Let's Encrypt HTTP-01 port 80.
 - **Docker login/push fails:** use the hostname, valid TLS and `docker-local` path;
   verify repository type and token permissions. Do not disable TLS validation.
-- **413 / upload timeout:** inspect Traefik request size/timeouts and chart NGINX.
+- **413 / upload timeout:** inspect the chart's NGINX; the Istio route has no timeout or size limit.
 - **Wrong bootstrap credentials:** restore the original Secret; changing encryption
   or PostgreSQL keys on an existing installation is not a password reset.
 

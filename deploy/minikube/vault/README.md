@@ -1,13 +1,13 @@
 # Vault on Minikube
 
-Deploy using Helm, like Traefik. No Terraform is needed.
+Deploy using Helm. No Terraform is needed.
 
 ```bash
 bash deploy/minikube/deploy-vault.sh --dry-run
 bash deploy/minikube/deploy-vault.sh
 ```
 
-Overrides: `KUBE_CONTEXT=mk4 STORAGE_CLASS=standard`. Requires Helm, kubectl, Traefik with its Middleware CRD, and the existing ready `jithendar/jithendar-com` certificate and default TLSStore. Bootstrap the cluster and shared TLS first if missing.
+Overrides: `KUBE_CONTEXT=mk4 STORAGE_CLASS=standard`. Requires Helm, kubectl, and mk4's Istio edge (Gateway `istio-ingress/public` and its ready wildcard certificate; `../istio/README.md`). The routing table there delegates `/ui` and `/v1` to `vault-virtualservice.yaml`, and `/vault` redirects to `/ui/`.
 
 The script installs/upgrades official chart 0.34.1 (Vault 2.0.4), creates namespace `vault`, and applies the single-resource manifests through `kustomization.yaml`. It does not initialize, unseal, restart, or delete stored data. Helm does not wait for readiness because new Vault servers are sealed.
 
@@ -32,7 +32,7 @@ After restarts, unseal again using the original shares; never reinitialize exist
 
 ## Lab boundaries and troubleshooting
 
-One persistent server, 10Gi PVC, 256Mi memory request/1Gi limit; injector and dev mode disabled. TLS terminates at Traefik; internal traffic to Vault uses HTTP. This is not HA or a production secret infrastructure design. Back up storage and unseal keys before changing Minikube. Never delete PVCs to fix a sealed pod.
+One persistent server, 10Gi PVC, 256Mi memory request/1Gi limit; injector and dev mode disabled. TLS terminates at the Istio gateway; internal traffic to Vault uses HTTP. This is not HA or a production secret infrastructure design. Back up storage and unseal keys before changing Minikube. Never delete PVCs to fix a sealed pod.
 
 - Missing TLS: restore the shared jithendar.com certificate/TLSStore.
 - UI 503: inspect pod logs, scheduling, PVC binding and `vault-ui` EndpointSlices. The UI service publishes sealed pods for initialization.

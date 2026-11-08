@@ -1,0 +1,28 @@
+{{- if .Values.overwriteForwardedFor }}
+# X-Forwarded-For is exactly the address the gateway saw (the PROXY protocol's), never what the client sent: the
+# applications read its first entry, and Envoy would otherwise only append to a client's own value.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: forwarded-for
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  workloadSelector:
+    labels: {{ toYaml .Values.selector | nindent 6 }}
+  configPatches:
+    - applyTo: ROUTE_CONFIGURATION
+      match:
+        context: GATEWAY
+      patch:
+        operation: MERGE
+        value:
+          request_headers_to_add:
+            - header:
+                key: x-forwarded-for
+                value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"
+              append_action: OVERWRITE_IF_EXISTS_OR_ADD
+            - header:
+                key: x-real-ip
+                value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"
+              append_action: OVERWRITE_IF_EXISTS_OR_ADD
+{{- end }}

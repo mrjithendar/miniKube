@@ -1,0 +1,25 @@
+# The visitor's address, from the host's HAProxy (PROXY protocol v2) on both public listeners. It must come before the
+# TLS inspector, which reads the ClientHello that follows the header.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: proxy-protocol
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  workloadSelector:
+    labels: {{ toYaml .Values.selector | nindent 6 }}
+  configPatches:
+{{- range list 80 443 }}
+    - applyTo: LISTENER_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          portNumber: {{ . }}
+      patch:
+        operation: INSERT_FIRST
+        value:
+          name: envoy.filters.listener.proxy_protocol
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.listener.proxy_protocol.v3.ProxyProtocol
+            allow_requests_without_proxy_protocol: {{ not $.Values.proxyProtocol.requireHeader }}
+{{- end }}

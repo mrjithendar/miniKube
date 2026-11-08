@@ -1,0 +1,31 @@
+{{- $alpn := list }}{{ range .Values.gateway.tls }}{{ if .alpn }}{{ $alpn = append $alpn . }}{{ end }}{{ end }}
+{{- if $alpn }}
+# ALPN for TLS hosts whose clients insist on it (PostgreSQL's direct TLS). Istio sets none for TLS servers.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: tls-alpn
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  workloadSelector:
+    labels: {{ toYaml .Values.selector | nindent 6 }}
+  configPatches:
+{{- range $alpn }}
+    - applyTo: FILTER_CHAIN
+      match:
+        context: GATEWAY
+        listener:
+          portNumber: 443
+          filterChain:
+            sni: {{ last (splitList "/" .host) | quote }}
+      patch:
+        operation: MERGE
+        value:
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              common_tls_context:
+                alpn_protocols: {{ toYaml .alpn | nindent 18 }}
+{{- end }}
+{{- end }}

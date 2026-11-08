@@ -1,0 +1,40 @@
+{{- with .Values.root }}
+# The routing table for {{ .host }}: redirects, then one delegation per path prefix to the VirtualService the owning
+# application keeps in its own namespace, then the site. Prefix match without a trailing slash, like the Ingresses
+# this replaced; delegates may narrow it (/moks/api/terminal), never widen it.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: {{ .host | replace "." "-" | quote }}
+  namespace: {{ $.Release.Namespace | quote }}
+spec:
+  hosts: {{ toYaml (prepend .aliases .host) | nindent 4 }}
+  gateways: [{{ $.Values.gateway.name | quote }}]
+  http:
+    {{- range .aliases }}
+    - name: {{ printf "alias-%s" (regexReplaceAll "[^a-z0-9]+" . "-") | quote }}
+      match: [{authority: {prefix: {{ . | quote }}}}]
+      redirect: {authority: {{ $.Values.root.host | quote }}, redirectCode: 308}
+    {{- end }}
+    {{- range .redirects }}
+    - name: {{ .name | quote }}
+      match: [{uri: {prefix: {{ .prefix | quote }}}}]
+      redirect:
+        {{- with .authority }}
+        authority: {{ . | quote }}
+        {{- end }}
+        {{- with .uri }}
+        uri: {{ . | quote }}
+        {{- end }}
+        redirectCode: 302
+    {{- end }}
+    {{- range .delegates }}
+    {{- $to := splitList "/" .to }}
+    - name: {{ .name | quote }}
+      match: [{uri: {prefix: {{ .prefix | quote }}}}]
+      delegate: {name: {{ index $to 1 | quote }}, namespace: {{ index $to 0 | quote }}}
+    {{- end }}
+    {{- $site := splitList "/" .default }}
+    - name: site
+      delegate: {name: {{ index $site 1 | quote }}, namespace: {{ index $site 0 | quote }}}
+{{- end }}

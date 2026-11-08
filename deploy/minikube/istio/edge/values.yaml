@@ -1,30 +1,89 @@
-# Installed by minikube-infrastructure/istio.tf (release istio-edge, namespace istio-ingress). Everything here lives in
-# the gateway's namespace: a Gateway's credentialName Secret must be in the namespace of the gateway pods.
+# Installed by minikube-infrastructure/istio.tf (release istio-edge, namespace istio-ingress): mk4's public edge.
+# The host's HAProxy (deploy/minikube/expose-ingress.sh) forwards 80/443 to the gateway's NodePorts 31080/31443 with
+# a PROXY protocol v2 header. Everything here lives in the gateway's namespace: a Gateway's credentialName Secret must
+# be in the namespace of the gateway pods.
 #
-# Migration away from Traefik, one host at a time:
-#   1. A host gets a Gateway + Certificate here, and its application repo replaces its Traefik Ingresses with a
-#      VirtualService bound to that Gateway (jithendar.com: minikube/60-istio-routing.yaml in that repo).
-#   2. While Traefik still owns the host's ports (the host's HAProxy sends 80/443 to Traefik, and other paths of the
-#      same hostname still have Traefik routes), traefikHandoff below sends the host's leftover requests to the gateway.
-#   3. Once no Traefik route is left for that hostname, deploy/minikube/expose-ingress.sh sends its traffic straight
-#      to the gateway NodePorts (31080/31443) and traefikHandoff for it is deleted.
+# Who owns what:
+#   - this chart: the Gateway, its certificate, the routing table for jithendar.com (which path prefix belongs to
+#     which application), redirects, logins (basic auth) and gateway-wide behaviour (compression, client addresses);
+#   - each application: a delegate VirtualService in its own namespace (no hosts, no gateways) for its prefix, or a
+#     VirtualService of its own for its own hostname (registry., jfrog., db.).
 selector:
   istio: ingressgateway
 
-gateways:
-  - name: jithendar-com
-    # Hosts as namespace/hostname: only VirtualServices in that namespace may bind them.
-    hosts:
-      - jithendar/jithendar.com
-      - jithendar/www.jithendar.com
-    certificate:
-      secretName: jithendar-com-gateway-tls
-      # DNS-01 (Cloudflare), so renewals do not depend on Traefik serving /.well-known/acme-challenge.
-      issuer: letsencrypt-dns
-      dnsNames: [jithendar.com, www.jithendar.com]
+gateway:
+  name: public
+  # One certificate for every hostname (DNS-01 through Cloudflare, so renewals need no HTTP route).
+  certificate:
+    name: jithendar-com
+    secretName: jithendar-com-gateway-tls
+    issuer: letsencrypt-dns
+    dnsNames: [jithendar.com, "*.jithendar.com"]
+  # HTTPS hosts as namespace/hostname: only VirtualServices in that namespace may bind them. jithendar.com and www
+  # are bound by the root VirtualService below; applications reach them through delegation.
+  https:
+    - istio-ingress/jithendar.com
+    - istio-ingress/www.jithendar.com
+    - harbor/registry.jithendar.com
+    - jfrog/jfrog.jithendar.com
+  # TLS terminated here, then plain TCP (VirtualService tcp routes): PostgreSQL at db.jithendar.com:443.
+  tls:
+    - host: jithendar/db.jithendar.com
+      # libpq 17+ with sslnegotiation=direct requires the server to select ALPN "postgresql".
+      alpn: [postgresql]
 
-# Same algorithms, content types and threshold as the Traefik middleware this replaces (jithendar.com repo,
-# formerly minikube/40-middlewares.yaml). Applies to every route on the gateway.
+# The routing table for jithendar.com. First match wins, so a prefix that begins with another one comes first
+# (/opensearch-dashboards before /opensearch). A delegate that does not exist (an application not installed) drops
+# its route, and the request falls through to the site, which answers 404.
+root:
+  host: jithendar.com
+  # Redirected to host, path and query kept (308).
+  aliases: [www.jithendar.com]
+  redirects:
+    # Harbor cannot be served under a path prefix: its portal lives on its own hostname.
+    - {name: harbor, prefix: /harbor, authority: registry.jithendar.com}
+    - {name: jfrog, prefix: /jfrog, authority: jfrog.jithendar.com, uri: /ui/}
+    - {name: vault, prefix: /vault, uri: /ui/}
+  delegates:
+    - {name: argocd, prefix: /argocd, to: argocd/argocd}
+    - {name: kiali, prefix: /kiali, to: istio-system/kiali}
+    - {name: grafana, prefix: /grafana, to: monitoring/grafana}
+    - {name: prometheus, prefix: /prometheus, to: monitoring/prometheus}
+    - {name: loki, prefix: /loki, to: monitoring/loki}
+    - {name: moks, prefix: /moks, to: moks/moks}
+    - {name: opensearch-dashboards, prefix: /opensearch-dashboards, to: moks/moks-opensearch-dashboards}
+    - {name: opensearch, prefix: /opensearch, to: moks/moks-opensearch}
+    - {name: roboshop, prefix: /roboshop, to: roboshop-ai/roboshop}
+    - {name: db, prefix: /db, to: jithendar/jithendar-db-ui}
+    - {name: vault-ui, prefix: /ui, to: vault/vault}
+    - {name: vault-api, prefix: /v1, to: vault/vault}
+  # Everything else.
+  default: jithendar/jithendar-com-site
+
+# Logins on the gateway (Envoy basic_auth, HTTPS listener only), one per entry, decided by path prefix before any
+# route, so a protected path never depends on route names. A request whose path starts with `prefix` and not with
+# `except` must carry that entry's login. Every `except` is itself covered by another entry's prefix.
+# The users (htpasswd lines, {SHA} only) come from the Secret istio-ingress/gateway-basic-auth, which
+# scripts/istio/gateway-basic-auth.py builds from each application's own login Secret (`from`); Terraform passes
+# them in as basicAuthUsers. A login whose source Secret is missing gets a line nobody can match: locked, not open.
+basicAuth:
+  - {name: prometheus-remote-write, prefix: /prometheus/api/v1/write, from: monitoring/prometheus-remote-write-auth}
+  - {name: prometheus, prefix: /prometheus, except: /prometheus/api/v1/write, from: monitoring/monitoring-auth}
+  - {name: loki-push, prefix: /loki/api/v1/push, from: monitoring/loki-push-auth}
+  - {name: loki-read, prefix: /loki, except: /loki/api/v1/push, from: monitoring/loki-read-auth}
+  - {name: opensearch-dashboards, prefix: /opensearch-dashboards, from: moks/moks-opensearch-dashboards-auth}
+  - {name: opensearch, prefix: /opensearch, except: /opensearch-dashboards, from: moks/moks-opensearch-auth}
+# Set by Terraform from that Secret: {<name>: "<user>:{SHA}<base64 sha1>"}. Rendering fails if one is missing.
+basicAuthUsers: {}
+
+# The bundled OpenSearch pod (moks) has no security of its own and POST/PUT change data, so /opensearch is read-only
+# from outside: GET and HEAD, plus POST to the search endpoints, which take their query in the body.
+readOnly:
+  - prefix: /opensearch
+    except: /opensearch-dashboards
+    postSuffixes: [/_search, /_msearch, /_count]
+
+# Same algorithms, content types and threshold as the Traefik middleware this replaced. Every route on the gateway.
 compression:
   enabled: true
   minContentLength: 1024
@@ -41,12 +100,26 @@ compression:
     - application/manifest+json
     - image/svg+xml
 
-# Traefik routes, priority 1 (below every Ingress, whose priority is its rule length), that pass the hosts' requests
-# to the gateway. HTTPS is re-encrypted to the gateway's 443 so the gateway terminates TLS exactly as it will once it
-# is the edge: X-Forwarded-Proto is https from Envoy itself, and nothing in the Gateway changes at cutover. Paths
-# that still have their own Traefik Ingress on these hosts (/argocd, /grafana, /moks, ...) keep winning.
+# The PROXY protocol header from the host's HAProxy carries the visitor's address. requireHeader false also accepts
+# connections without it (Traefik's hand-off while it still runs); Terraform sets it true once Traefik is gone.
+proxyProtocol:
+  requireHeader: false
+
+# Applications read the first X-Forwarded-For entry. The gateway replaces whatever a client sent with the address it
+# saw itself (the PROXY protocol's), so nobody can choose theirs.
+overwriteForwardedFor: true
+
+# Temporary, while Traefik still runs (Terraform: traefik_enabled). Traefik passes these hosts to the gateway at the
+# lowest priority, so anything without its own Traefik route any more already works through Istio.
 traefikHandoff:
-  enabled: true
-  hosts: [jithendar.com, www.jithendar.com]
-  # SNI and certificate name Traefik checks on the gateway; the gateway's certificate covers both hosts.
+  enabled: false
+  hosts: [jithendar.com, www.jithendar.com, registry.jithendar.com]
+  # SNI and certificate name Traefik checks on the gateway; the wildcard certificate covers every host.
   serverName: jithendar.com
+
+# Delegates for add-ons whose upstream charts render only an Ingress (turned off in their values): rendered here, in
+# the add-on's namespace (templates/route-*.yaml). Applications and local charts keep their own (moks, roboshop-ai, jithendar.com, Prometheus,
+# Loki, Argo CD, Harbor, Vault, JFrog).
+addonRoutes:
+  kiali: {namespace: istio-system, host: kiali, port: 20001}
+  grafana: {namespace: monitoring, host: grafana, port: 80}

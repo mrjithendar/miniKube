@@ -11,6 +11,6 @@ resource "helm_release" "prometheus" {
   wait           = true
   timeout        = var.helm_timeout
 
-  # Its Middleware objects (traefik.io/v1alpha1) need the CRDs the Traefik chart installs.
-  depends_on = [helm_release.traefik]
+  # Routed by the Istio gateway (delegate VirtualService in the chart; login in istio-edge).
+  depends_on = [helm_release.istio_base]
 }

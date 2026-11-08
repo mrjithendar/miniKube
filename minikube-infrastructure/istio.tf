@@ -62,17 +62,55 @@ resource "helm_release" "istio_ingressgateway" {
   depends_on = [helm_release.istiod]
 }
 
-# Gateways, their Let's Encrypt certificates (DNS-01), response compression and the temporary Traefik hand-off routes, in
-# namespace istio-ingress. Local chart deploy/minikube/istio/edge. Applications bind VirtualServices to these Gateways.
+# mk4's public edge, namespace istio-ingress, local chart deploy/minikube/istio/edge: Gateway public, its wildcard
+# certificate, the jithendar.com routing table, logins, read-only rules, PROXY protocol, compression, and while Traefik
+# runs its hand-off routes. Applications bind delegate VirtualServices to the routing table.
+#
+# The logins (htpasswd lines) come from Secret istio-ingress/gateway-basic-auth, written by
+# scripts/istio/gateway-basic-auth.py from the applications' own login Secrets. They are in this state file and in the
+# EnvoyFilter as {SHA} hashes, never in Git.
+data "kubernetes_secret_v1" "gateway_basic_auth" {
+  metadata {
+    name      = "gateway-basic-auth"
+    namespace = "istio-ingress"
+  }
+}
+
+locals {
+  edge_values      = yamldecode(file("${local.minikube}/istio/edge/values.yaml"))
+  basic_auth_names = [for login in local.edge_values.basicAuth : login.name]
+}
+
 resource "helm_release" "istio_edge" {
   name      = "istio-edge"
   namespace = "istio-ingress"
   chart     = "${local.minikube}/istio/edge"
 
+  values = [
+    file("${local.minikube}/istio/edge/values.yaml"),
+    yamlencode({
+      traefikHandoff = { enabled = var.traefik_enabled }
+      proxyProtocol  = { requireHeader = !var.traefik_enabled }
+    }),
+  ]
+  set_sensitive = [for name in local.basic_auth_names : {
+    name  = "basicAuthUsers.${name}"
+    value = lookup(data.kubernetes_secret_v1.gateway_basic_auth.data, name, "")
+    type  = "string"
+  }]
+
   wait    = true
   timeout = var.helm_timeout
 
-  # Gateway/EnvoyFilter (istio-base CRDs, a running gateway), Certificate (cert-manager CRDs and ClusterIssuer
-  # letsencrypt-dns), IngressRoute/ServersTransport (Traefik CRDs).
+  lifecycle {
+    precondition {
+      condition = alltrue([for name in local.basic_auth_names :
+      lookup(nonsensitive(data.kubernetes_secret_v1.gateway_basic_auth.data), name, "") != ""])
+      error_message = "Secret istio-ingress/gateway-basic-auth lacks a login: run python3 scripts/istio/gateway-basic-auth.py first."
+    }
+  }
+
+  # Gateway/EnvoyFilter/AuthorizationPolicy (istio-base CRDs, a running gateway), Certificate (cert-manager and
+  # ClusterIssuer letsencrypt-dns), and while Traefik runs, IngressRoute/ServersTransport (Traefik's CRDs).
   depends_on = [helm_release.istio_ingressgateway, helm_release.letsencrypt, helm_release.traefik]
 }

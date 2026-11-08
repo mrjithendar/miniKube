@@ -1,0 +1,34 @@
+{{- if .Values.readOnly }}
+# Read-only prefixes from outside: only GET, HEAD, and POST to the listed search suffixes. Port 443 only, and never the
+# TLS (TCP) hosts: for TCP, Istio drops the HTTP fields of a DENY rule and would refuse every connection.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: read-only
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  selector:
+    matchLabels: {{ toYaml .Values.selector | nindent 6 }}
+  action: DENY
+  rules:
+    {{- range .Values.readOnly }}
+    - to:
+        - operation:
+            ports: ["443"]
+            paths: [{{ .prefix | quote }}, {{ printf "%s/*" .prefix | quote }}]
+            {{- with .except }}
+            notPaths: [{{ . | quote }}, {{ printf "%s*" . | quote }}]
+            {{- end }}
+            notMethods: [GET, HEAD, POST]
+      when:
+        - {key: connection.sni, notValues: {{ include "edge.tlsSnis" $ }}}
+    - to:
+        - operation:
+            ports: ["443"]
+            methods: [POST]
+            paths: [{{ printf "%s/*" .prefix | quote }}]
+            notPaths: [{{ range $i, $s := .postSuffixes }}{{ if $i }}, {{ end }}{{ printf "*%s" $s | quote }}{{ end }}{{ with .except }}, {{ printf "%s*" . | quote }}{{ end }}]
+      when:
+        - {key: connection.sni, notValues: {{ include "edge.tlsSnis" $ }}}
+    {{- end }}
+{{- end }}

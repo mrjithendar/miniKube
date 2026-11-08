@@ -1,0 +1,72 @@
+{{- if .Values.basicAuth }}
+# One basic_auth filter per login on the HTTPS listener, wrapped in a matcher that skips it unless the path starts with
+# its prefix (and not with its except). Paths are already normalised here. 401 carries WWW-Authenticate, so browsers
+# prompt. Plain HTTP never reaches a login: port 80 only redirects.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: basic-auth
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  priority: 20
+  workloadSelector:
+    labels: {{ toYaml .Values.selector | nindent 6 }}
+  configPatches:
+{{- range .Values.basicAuth }}
+{{- $users := required (printf "basicAuthUsers.%s is missing: run scripts/istio/gateway-basic-auth.py, then terraform apply" .name) (index $.Values.basicAuthUsers .name) }}
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          portNumber: 443
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: {{ printf "basic-auth.%s" .name | quote }}
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.common.matching.v3.ExtensionWithMatcher
+            extension_config:
+              name: envoy.filters.http.basic_auth
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.basic_auth.v3.BasicAuth
+                users:
+                  inline_string: {{ $users | quote }}
+            xds_matcher:
+              matcher_list:
+                matchers:
+                  {{- with .except }}
+                  - predicate:
+                      single_predicate:
+                        input:
+                          name: path
+                          typed_config:
+                            "@type": type.googleapis.com/envoy.type.matcher.v3.HttpRequestHeaderMatchInput
+                            header_name: ":path"
+                        value_match: {prefix: {{ . | quote }}}
+                    on_match:
+                      action:
+                        name: skip
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.common.matcher.action.v3.SkipFilter
+                  {{- end }}
+                  - predicate:
+                      not_matcher:
+                        single_predicate:
+                          input:
+                            name: path
+                            typed_config:
+                              "@type": type.googleapis.com/envoy.type.matcher.v3.HttpRequestHeaderMatchInput
+                              header_name: ":path"
+                          value_match: {prefix: {{ .prefix | quote }}}
+                    on_match:
+                      action:
+                        name: skip
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.common.matcher.action.v3.SkipFilter
+{{- end }}
+{{- end }}

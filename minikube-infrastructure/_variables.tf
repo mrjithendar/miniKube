@@ -32,3 +32,9 @@ variable "adopt_existing_traefik" {
   type        = bool
   default     = false
 }
+
+variable "traefik_enabled" {
+  description = "Keep Traefik installed (traefik.tf). true only while the host's HAProxy still forwards to Traefik; false uninstalls it and makes the Istio gateway require the PROXY protocol."
+  type        = bool
+  default     = false
+}

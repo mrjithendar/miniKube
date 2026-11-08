@@ -9,28 +9,10 @@ deployment:
       memory: 64Mi
     limits:
       memory: 512Mi
-  # Traefik terminates TLS with the default certificate (jithendar.com TLSStore), like /grafana and /prometheus.
+  # Routed by the Istio gateway: delegate VirtualService istio-system/kiali, rendered by the edge chart
+  # (istio/edge, addonRoutes). Kiali serves under its default web root /kiali.
   ingress:
-    enabled: true
-    override_yaml:
-      metadata:
-        annotations:
-          traefik.ingress.kubernetes.io/router.tls: "true"
-      spec:
-        ingressClassName: traefik
-        tls:
-          - hosts: [jithendar.com]
-        rules:
-          - host: jithendar.com
-            http:
-              paths:
-                - path: /kiali
-                  pathType: Prefix
-                  backend:
-                    service:
-                      name: kiali
-                      port:
-                        number: 20001
+    enabled: false
 external_services:
   # The mk4 Prometheus (observability/prometheus) serves under /prometheus and scrapes istiod and the sidecars.
   prometheus:

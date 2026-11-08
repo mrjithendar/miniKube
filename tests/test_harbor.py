@@ -104,29 +104,33 @@ def test_namespace_manifest_matches_deploy_contract():
         {'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': 'harbor', 'labels': {'istio-injection': 'enabled'}}}
 
 
+EDGE = yaml.safe_load((ROOT / 'deploy/minikube/istio/edge/values.yaml').read_text())
+
+
 def test_one_hostname_everywhere():
     host = VALUES['externalURL'].removeprefix('https://')
-    assert host == VALUES['expose']['ingress']['hosts']['core'] == 'registry.jithendar.com'
+    assert host == 'registry.jithendar.com'
     assert by_name('Certificate')['harbor-public']['spec']['dnsNames'] == [host]
-    assert [r['host'] for r in by_name('Ingress')['harbor-http']['spec']['rules']] == [host]
-    redirect = by_name('Middleware')['harbor-shortcut']['spec']['redirectRegex']
-    assert redirect['replacement'] == f'https://{host}/harbor${{1}}'
-    assert re.fullmatch(redirect['regex'], 'https://jithendar.com/harbor/projects')
-    assert not re.fullmatch(redirect['regex'], 'https://jithendar.com/harbour')
-    shortcut = by_name('Ingress')['harbor-shortcut']
-    assert shortcut['spec']['rules'][0]['host'] == 'jithendar.com'
-    assert shortcut['spec']['rules'][0]['http']['paths'][0]['path'] == '/harbor'
-    assert 'secretName' not in shortcut['spec']['tls'][0]   # jithendar.com's default certificate, like vault-shortcut
+    route = by_name('VirtualService')['harbor']['spec']
+    assert route['hosts'] == [host] and route['gateways'] == ['istio-ingress/public']
+    # The Gateway lets only namespace harbor bind the hostname, and jithendar.com/harbor redirects there.
+    assert f'harbor/{host}' in EDGE['gateway']['https']
+    assert {'name': 'harbor', 'prefix': '/harbor', 'authority': host} in EDGE['root']['redirects']
 
 
-def test_chart_ingress_is_traefik_https_only():
-    ingress = VALUES['expose']['ingress']
-    assert ingress['className'] == 'traefik'
-    assert ingress['annotations']['traefik.ingress.kubernetes.io/router.entrypoints'] == 'websecure'
-    assert all(v is None for k, v in ingress['annotations'].items() if 'nginx' in k or k.startswith('ingress.kubernetes.io/'))
+def test_gateway_routes_what_the_chart_ingress_did():
+    # No Ingress from the chart: clusterIP, and its nginx (no arm64 build) never runs.
+    assert VALUES['expose']['type'] == 'clusterIP' and VALUES['nginx']['replicas'] == 0
+    assert not by_name('Ingress') and not by_name('Middleware')
+    core, portal = by_name('VirtualService')['harbor']['spec']['http']
+    assert [m['uri']['prefix'] for m in core['match']] == ['/api/', '/service/', '/v2/', '/c/']
+    assert core['route'][0]['destination']['host'] == 'harbor-core.harbor.svc.cluster.local'
+    assert 'match' not in portal and portal['route'][0]['destination']['host'] == 'harbor-portal.harbor.svc.cluster.local'
+    assert 'timeout' not in core   # a large layer push takes minutes
     assert VALUES['expose']['tls'] == {'enabled': True, 'certSource': 'secret', 'secret': {'secretName': 'harbor-public-tls'}}
     assert VALUES['caSecretName'] == 'harbor-public-tls'   # else core's ca-download volume renders with no source
-    assert by_name('Certificate')['harbor-public']['spec']['secretName'] == 'harbor-public-tls'
+    certificate = by_name('Certificate')['harbor-public']['spec']
+    assert certificate['secretName'] == 'harbor-public-tls' and certificate['issuerRef']['name'] == 'letsencrypt-dns'
 
 
 def test_everything_runs_on_one_node():

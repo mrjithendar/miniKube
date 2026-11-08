@@ -1,0 +1,16 @@
+# /prometheus on the Istio gateway (a delegate of the jithendar.com routing table, deploy/minikube/istio/edge).
+# Prometheus serves under /prometheus itself (--web.route-prefix). The logins are on the gateway (edge values.yaml,
+# basicAuth): monitoring-auth for the UI and API, the write-only {{ .Values.remoteWrite.secretName }} for
+# /prometheus/api/v1/write.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: prometheus
+  namespace: {{ .Release.Namespace }}
+spec:
+  http:
+  - name: prometheus
+    route:
+    - destination:
+        host: {{ printf "prometheus.%s.svc.cluster.local" .Release.Namespace }}
+        port: {number: 9090}

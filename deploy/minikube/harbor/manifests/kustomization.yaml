@@ -11,8 +11,5 @@ resources:
 - harbor-redis-data-pvc.yaml
 - harbor-redis-service.yaml
 - harbor-redis-statefulset.yaml
-- harbor-https-middleware.yaml
-- harbor-http-ingress.yaml
-- harbor-shortcut-middleware.yaml
-- harbor-shortcut-ingress.yaml
+- harbor-virtualservice.yaml
 - harbor-backup-cronjob.yaml

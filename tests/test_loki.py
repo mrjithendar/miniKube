@@ -23,25 +23,27 @@ class LokiTests(unittest.TestCase):
         binding=next(d for d in docs if d['kind']=='ClusterRoleBinding')
         self.assertEqual(binding['subjects'],[{'kind':'ServiceAccount','name':'alloy','namespace':'monitoring'}])
 
-    def test_public_route_is_authenticated_and_read_only(self):
+    def test_public_paths_are_push_and_the_reads_moks_calls(self):
         docs=[d for d in yaml.safe_load_all(subprocess.check_output(['helm','template','loki',str(ROOT/'deploy/minikube/observability/loki'),'-n','monitoring'],text=True)) if d]
-        ingress=next(d for d in docs if d['kind']=='Ingress' and d['metadata']['name']=='loki-read')
-        self.assertEqual({d['metadata']['name'] for d in docs if d['kind']=='Ingress'},{'loki-read','loki-push'})
-        self.assertEqual(ingress['metadata']['annotations']['traefik.ingress.kubernetes.io/router.middlewares'],'monitoring-loki-read-auth@kubernetescrd')
-        paths={p['path']:p['pathType'] for r in ingress['spec']['rules'] for p in r['http']['paths']}
-        self.assertEqual(paths,{'/loki/api/v1/query_range':'Exact','/loki/api/v1/labels':'Exact','/loki/api/v1/format_query':'Exact','/loki/api/v1/label':'Prefix'})
-        middleware=next(d for d in docs if d['kind']=='Middleware' and d['metadata']['name']=='loki-read-auth')
-        self.assertEqual(middleware['spec']['basicAuth']['secret'],'loki-read-auth')
-        self.assertNotEqual(middleware['spec']['basicAuth']['secret'],'monitoring-auth')
+        self.assertFalse(any(d['kind'] in ('Ingress','Middleware') for d in docs))
+        route=next(d for d in docs if d['kind']=='VirtualService' and d['metadata']['name']=='loki')
+        # A delegate of the gateway's routing table: no hosts or gateways of its own.
+        self.assertNotIn('hosts',route['spec']); self.assertNotIn('gateways',route['spec'])
+        (http,)=route['spec']['http']
+        matches={next(iter(m['uri'].items())) for m in http['match']}
+        self.assertEqual(matches,{('exact','/loki/api/v1/push'),('exact','/loki/api/v1/query_range'),('exact','/loki/api/v1/labels'),
+                                  ('exact','/loki/api/v1/format_query'),('prefix','/loki/api/v1/label')})
+        self.assertEqual(http['route'][0]['destination'],{'host':'loki.monitoring.svc.cluster.local','port':{'number':3100}})
 
-    def test_push_route_is_authenticated_and_push_only(self):
-        docs=[d for d in yaml.safe_load_all(subprocess.check_output(['helm','template','loki',str(ROOT/'deploy/minikube/observability/loki'),'-n','monitoring'],text=True)) if d]
-        ingress=next(d for d in docs if d['kind']=='Ingress' and d['metadata']['name']=='loki-push')
-        self.assertEqual(ingress['metadata']['annotations']['traefik.ingress.kubernetes.io/router.middlewares'],'monitoring-loki-push-auth@kubernetescrd')
-        paths={p['path']:p['pathType'] for r in ingress['spec']['rules'] for p in r['http']['paths']}
-        self.assertEqual(paths,{'/loki/api/v1/push':'Exact'})
-        middleware=next(d for d in docs if d['kind']=='Middleware' and d['metadata']['name']=='loki-push-auth')
-        self.assertEqual(middleware['spec']['basicAuth']['secret'],'loki-push-auth')
+    def test_push_and_read_have_separate_logins_on_the_gateway(self):
+        edge=yaml.safe_load((ROOT/'deploy/minikube/istio/edge/values.yaml').read_text())
+        logins={l['name']:l for l in edge['basicAuth']}
+        self.assertEqual(logins['loki-push']['prefix'],'/loki/api/v1/push')
+        self.assertEqual(logins['loki-push']['from'],'monitoring/loki-push-auth')
+        self.assertEqual((logins['loki-read']['prefix'],logins['loki-read']['except']),('/loki','/loki/api/v1/push'))
+        self.assertEqual(logins['loki-read']['from'],'monitoring/loki-read-auth')
+        self.assertNotIn('monitoring-auth',logins['loki-read']['from']+logins['loki-push']['from'])
+        self.assertIn({'name':'loki','prefix':'/loki','to':'monitoring/loki'},edge['root']['delegates'])
 
     def test_config_files_reach_configmaps_verbatim(self):
         docs=[d for d in yaml.safe_load_all(subprocess.check_output(['helm','template','loki',str(ROOT/'deploy/minikube/observability/loki'),'-n','monitoring'],text=True)) if d]

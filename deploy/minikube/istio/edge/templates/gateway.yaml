@@ -1,0 +1,31 @@
+{{- with .Values.gateway }}
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: {{ .name | quote }}
+  namespace: {{ $.Release.Namespace | quote }}
+spec:
+  selector: {{ toYaml $.Values.selector | nindent 4 }}
+  servers:
+    # One server for every HTTPS host: one filter chain, so a request's Host may differ from its SNI (Traefik's
+    # hand-off sends SNI jithendar.com for all of them).
+    - port: {number: 443, name: https, protocol: HTTPS}
+      hosts: {{ toYaml .https | nindent 8 }}
+      tls:
+        mode: SIMPLE
+        credentialName: {{ .certificate.secretName | quote }}
+        minProtocolVersion: TLSV1_2
+    {{- range .tls }}
+    - port: {number: 443, name: {{ printf "tls-%s" (regexReplaceAll "[^a-z0-9]+" (last (splitList "/" .host)) "-") | quote }}, protocol: TLS}
+      hosts: [{{ .host | quote }}]
+      tls:
+        mode: SIMPLE
+        credentialName: {{ $.Values.gateway.certificate.secretName | quote }}
+        minProtocolVersion: TLSV1_2
+    {{- end }}
+    # Plain HTTP only redirects (301 to https, same host and path).
+    - port: {number: 80, name: http, protocol: HTTP}
+      hosts: {{ toYaml .https | nindent 8 }}
+      tls:
+        httpsRedirect: true
+{{- end }}

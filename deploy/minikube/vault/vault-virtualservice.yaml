@@ -1,0 +1,15 @@
+# Vault's UI (/ui) and API (/v1) on jithendar.com through the Istio gateway: a delegate of the edge chart's routing
+# table (deploy/minikube/istio/edge, delegates vault-ui and vault-api; /vault redirects to /ui/ there). HTTP to HTTPS
+# is the Gateway's own redirect.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: vault
+  namespace: vault
+spec:
+  http:
+  - name: vault
+    route:
+    - destination:
+        host: vault-ui.vault.svc.cluster.local
+        port: {number: 8200}

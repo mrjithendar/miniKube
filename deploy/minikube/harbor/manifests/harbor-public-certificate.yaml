@@ -1,5 +1,5 @@
-# TLS for the registry hostname (expose.tls.secret.secretName and caSecretName in ../values.yaml).
-# HTTP-01 needs the DNS A record first: README.md "Prerequisites".
+# The registry hostname's certificate for caSecretName in ../values.yaml (the portal's CA download). Visitors get the
+# Istio gateway's wildcard certificate. DNS-01, so it renews without any HTTP route.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -9,5 +9,5 @@ spec:
   secretName: harbor-public-tls
   dnsNames: [registry.jithendar.com]
   issuerRef:
-    name: letsencrypt-prod
+    name: letsencrypt-dns
     kind: ClusterIssuer

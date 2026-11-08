@@ -1,0 +1,28 @@
+# https://registry.jithendar.com on the Istio gateway (miniKube deploy/minikube/istio/edge: Gateway public, wildcard
+# certificate; HTTP only redirects). The API, token service, registry and chart paths go to core, the rest to the
+# portal: what the chart's Ingress did. No route timeout (Istio's default): a large layer push can take minutes.
+# jithendar.com/harbor redirects here (the edge chart's routing table).
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: harbor
+  namespace: harbor
+spec:
+  hosts: [registry.jithendar.com]
+  gateways: [istio-ingress/public]
+  http:
+  - name: core
+    match:
+    - uri: {prefix: /api/}
+    - uri: {prefix: /service/}
+    - uri: {prefix: /v2/}
+    - uri: {prefix: /c/}
+    route:
+    - destination:
+        host: harbor-core.harbor.svc.cluster.local
+        port: {number: 80}
+  - name: portal
+    route:
+    - destination:
+        host: harbor-portal.harbor.svc.cluster.local
+        port: {number: 80}

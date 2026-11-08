@@ -1,4 +1,4 @@
-"""Install Argo CD and its ingress after Terraform's add-ons; never implicitly deploy business apps."""
+"""Install Argo CD and its route after Terraform's add-ons; never implicitly deploy business apps."""
 import argparse
 import base64
 import os
@@ -13,9 +13,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = Path(os.environ.get('ROBOSHOP_AI_DIR', ROOT.parent / 'roboshop-ai')).resolve()
-# Traefik and cert-manager are not here: minikube-infrastructure/ (Terraform) installs them with the other add-ons,
-# before this script. The Argo CD ingress needs Traefik's IngressClass and Middleware CRD.
-TRAEFIK_PREREQUISITES = (('ingressclass', 'traefik'), ('crd', 'middlewares.traefik.io'))
+# Istio and cert-manager are not here: minikube-infrastructure/ (Terraform) installs them with the other add-ons,
+# before this script. Argo CD's route is an Istio VirtualService (deploy/minikube/argocd), routed by the gateway.
+EDGE_PREREQUISITES = (('crd', 'virtualservices.networking.istio.io'), ('crd', 'gateways.networking.istio.io'))
 
 
 def refresh_pull_secrets(context):
@@ -166,14 +166,14 @@ def main():
     def read(*parts):
         return subprocess.check_output(kube + list(parts), text=True)
     read('get', 'namespace', 'kube-system', '-o', 'name')
-    for kind, name in TRAEFIK_PREREQUISITES:
+    for kind, name in EDGE_PREREQUISITES:
         if not read('get', kind, name, '--ignore-not-found', '-o', 'name').strip():
-            raise RuntimeError(f'{kind}/{name} not found: Traefik is a Terraform release. Run '
+            raise RuntimeError(f'{kind}/{name} not found: Istio is a Terraform release. Run '
                                'terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars first.')
     # Reuse the existing pinned, Helm-version-compatible Argo installer.
     subprocess.check_call([sys.executable, str(ROOT / 'scripts/argocd/deploy.py'), 'install', '--context', args.context, '--timeout', str(args.timeout)])
     subprocess.check_call(kube + ['apply', '-k', str(ROOT / 'deploy/minikube/argocd')])
-    print('Argo CD and its ingress are ready. Public HTTPS still requires host ports 80/443 (expose-ingress.sh) and the '
+    print('Argo CD and its route are ready. Public HTTPS still requires host ports 80/443 (expose-ingress.sh) and the '
           'shared certificate.')
     if args.deploy_apps:
         subprocess.check_call([sys.executable, str(ROOT / 'scripts/argocd/deploy.py'), '--context', args.context, '--timeout', str(args.timeout)])

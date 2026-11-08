@@ -1,0 +1,22 @@
+{{- with .Values.traefikHandoff }}
+{{- if .enabled }}
+{{- $match := list }}
+{{- range .hosts }}{{ $match = append $match (printf "Host(`%s`)" .) }}{{ end }}
+# Temporary, while Traefik runs (Terraform traefik_enabled): whatever these hosts have no Traefik route for any more
+# goes to the gateway. Gone with Traefik.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: istio-handoff-http
+  namespace: {{ $.Release.Namespace | quote }}
+spec:
+  entryPoints: [web]
+  routes:
+    - kind: Rule
+      match: {{ join " || " $match | quote }}
+      priority: 1
+      services:
+        - name: istio-ingressgateway
+          port: 80
+{{- end }}
+{{- end }}

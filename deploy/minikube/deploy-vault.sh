@@ -25,10 +25,10 @@ for tool in helm kubectl; do
 done
 kube=(kubectl --context="$KUBE_CONTEXT" --request-timeout=20s)
 # Fail before installation if the existing ingress/TLS/storage prerequisites are missing.
-"${kube[@]}" get ingressclass traefik >/dev/null
-"${kube[@]}" get crd middlewares.traefik.io >/dev/null
-"${kube[@]}" -n jithendar get tlsstore default >/dev/null
-"${kube[@]}" -n jithendar wait certificate/jithendar-com --for=condition=Ready --timeout=30s
+# Routing is the Istio gateway's (vault/vault-virtualservice.yaml, delegated from the edge chart's routing table).
+"${kube[@]}" get crd virtualservices.networking.istio.io >/dev/null
+"${kube[@]}" -n istio-ingress get gateway public >/dev/null
+"${kube[@]}" -n istio-ingress wait certificate/jithendar-com --for=condition=Ready --timeout=30s
 "${kube[@]}" get storageclass "$STORAGE_CLASS" >/dev/null
 # No --wait: Vault legitimately stays unready until an operator unseals it.
 # No --atomic: an unsealed-state wait must never roll back a persistent install.

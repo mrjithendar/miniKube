@@ -2,16 +2,8 @@
 {{- if .enabled }}
 {{- $match := list }}
 {{- range .hosts }}{{ $match = append $match (printf "Host(`%s`)" .) }}{{ end }}
-# Temporary: Traefik still receives every connection from the host's HAProxy. Delete with traefikHandoff.enabled=false
-# once the HAProxy sends these hosts to the gateway directly (values.yaml, step 3).
-apiVersion: traefik.io/v1alpha1
-kind: ServersTransport
-metadata:
-  name: istio-ingressgateway
-  namespace: {{ $.Release.Namespace | quote }}
-spec:
-  serverName: {{ .serverName | quote }}
----
+# Temporary, while Traefik runs (Terraform traefik_enabled): whatever these hosts have no Traefik route for any more
+# goes to the gateway. Gone with Traefik.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -31,20 +23,5 @@ spec:
           serversTransport: istio-ingressgateway
   # Traefik's default certificate (TLSStore default, jithendar.com repo), which covers these hosts.
   tls: {}
----
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: istio-handoff-http
-  namespace: {{ $.Release.Namespace | quote }}
-spec:
-  entryPoints: [web]
-  routes:
-    - kind: Rule
-      match: {{ join " || " $match | quote }}
-      priority: 1
-      services:
-        - name: istio-ingressgateway
-          port: 80
 {{- end }}
 {{- end }}

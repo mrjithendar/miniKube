@@ -6,31 +6,23 @@
 # - the node that holds Harbor's volumes (nodeSelector below);
 # - the Secret harbor/harbor-credentials (./create-secrets.sh --services harbor --apply).
 #
-# To change the hostname, change externalURL and expose.ingress.hosts.core here, and the hostnames in
-# manifests/harbor-public-certificate.yaml, manifests/harbor-http-ingress.yaml and manifests/harbor-shortcut-middleware.yaml.
+# To change the hostname, change externalURL here and the hostnames in manifests/harbor-public-certificate.yaml,
+# manifests/harbor-virtualservice.yaml and miniKube's deploy/minikube/istio/edge/values.yaml (gateway.https, the
+# /harbor redirect).
 
 externalURL: https://registry.jithendar.com
 
+# The Istio gateway routes registry.jithendar.com straight to core and portal (manifests/harbor-virtualservice.yaml),
+# the paths the chart's Ingress used. clusterIP renders no Ingress; its nginx proxy stays at 0 replicas (below), so
+# the Service "harbor" it adds has no endpoints and nothing uses it. TLS terminates at the gateway.
 expose:
-  type: ingress
+  type: clusterIP
   tls:
     enabled: true
-    # cert-manager issues it: manifests/harbor-public-certificate.yaml.
+    # cert-manager issues it: manifests/harbor-public-certificate.yaml. Only the portal's CA download uses it now.
     certSource: secret
     secret:
       secretName: harbor-public-tls
-  ingress:
-    hosts:
-      core: registry.jithendar.com
-    className: traefik
-    annotations:
-      traefik.ingress.kubernetes.io/router.entrypoints: websecure
-      traefik.ingress.kubernetes.io/router.tls: 'true'
-      # The chart's defaults are for ingress-nginx; Traefik has no body-size limit to lift.
-      ingress.kubernetes.io/ssl-redirect: null
-      ingress.kubernetes.io/proxy-body-size: null
-      nginx.ingress.kubernetes.io/ssl-redirect: null
-      nginx.ingress.kubernetes.io/proxy-body-size: null
 
 # Backs the portal's "download registry certificate" link. Without it, certSource secret renders the core
 # Deployment's ca-download volume with no source, which the API server rejects.
@@ -252,7 +244,8 @@ metrics:
   enabled: false
 
 nginx:
-  # Only used when expose.type is clusterIP/nodePort/loadBalancer; the Traefik Ingress replaces it.
+  # expose.type clusterIP renders this proxy; the Istio gateway does its job (manifests/harbor-virtualservice.yaml).
+  # No arm64 image of it is built (deploy-harbor.sh), so it must stay at 0.
   replicas: 0
 
 cache:

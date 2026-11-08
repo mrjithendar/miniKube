@@ -20,22 +20,16 @@ resources:
   limits:
     cpu: 500m
     memory: 512Mi
-# Shared with Prometheus's Traefik BasicAuth middleware; created by credentials.py.
+# Also Prometheus's login on the Istio gateway (edge values.yaml, basicAuth); created by credentials.py.
 admin:
   existingSecret: monitoring-auth
   userKey: username
   passwordKey: password
+# Routed by the Istio gateway: delegate VirtualService monitoring/grafana, rendered by the edge chart
+# (istio/edge, addonRoutes).
 ingress:
-  enabled: true
-  ingressClassName: traefik
-  annotations:
-    traefik.ingress.kubernetes.io/router.tls: "true"
-  hosts: [jithendar.com]
-  path: /grafana
-  pathType: Prefix
-  tls:
-    - hosts: [jithendar.com]
-# Do not strip /grafana at the ingress: Grafana handles the prefix itself.
+  enabled: false
+# Nothing strips /grafana on the way in: Grafana handles the prefix itself.
 grafana.ini:
   server:
     domain: jithendar.com

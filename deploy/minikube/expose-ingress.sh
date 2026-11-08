@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Connects host ports to the selected local Minikube ingress endpoints.
-# TCP forwarding leaves TLS termination to Traefik. This changes host networking;
+# TCP forwarding leaves TLS termination to the Istio ingress gateway. This changes host networking;
 # it does not create DNS records or prove that upstream firewalls allow traffic.
 
 # Validate the supported host before operational side effects.
@@ -8,7 +8,7 @@ if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/lib/require-centos.sh"
 roboshop_require_centos "${1:-}" linux || exit 1
 # Run on the Linux Docker/Minikube host, never on the remote Mac client.
-# HAProxy forwards TCP with a PROXY protocol v2 header (client IP); Traefik handles TLS and cert-manager ACME.
+# HAProxy forwards TCP with a PROXY protocol v2 header (client IP) to the Istio gateway's NodePorts 31080/31443.
 set -euo pipefail
 fail() { echo "ERROR: $*" >&2; exit 1; }
 if [[ "${1:-}" == --help ]]; then
@@ -31,11 +31,13 @@ endpoint="${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.
 [[ "$(docker inspect --format '{{.State.Running}}' "$PROFILE")" == true ]] || fail "Local Minikube node $PROFILE is not running."
 network="$(docker inspect --format '{{range $name, $details := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$PROFILE")"
 [[ "$network" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || fail 'Expected exactly one Docker network on the Minikube node.'
-kubectl --context="$PROFILE" -n traefik rollout status deployment/traefik --timeout=120s
-# HAProxy sends the PROXY protocol (real client IPs for Traefik's IP allowlists and the apps' logs). Traefik must
-# already accept it (traefik/values.yaml, proxyProtocol.trustedIPs), or every connection would fail.
-kubectl --context="$PROFILE" -n traefik get deployment traefik -o jsonpath='{.spec.template.spec.containers[0].args}' \
-  | grep -q 'websecure.proxyProtocol.trustedIPs' || fail 'Traefik does not accept the PROXY protocol yet: apply minikube-infrastructure/ (traefik.tf) first.'
+kubectl --context="$PROFILE" -n istio-ingress rollout status deployment/istio-ingressgateway --timeout=120s
+# HAProxy sends the PROXY protocol (real client IPs for the gateway's allowlists and the apps' logs). The gateway must
+# already read it (istio/edge, EnvoyFilter proxy-protocol), or every connection would fail.
+kubectl --context="$PROFILE" -n istio-ingress get envoyfilter proxy-protocol -o name >/dev/null 2>&1 \
+  || fail 'The Istio gateway does not read the PROXY protocol yet: apply minikube-infrastructure/ (istio.tf, istio-edge) first.'
+kubectl --context="$PROFILE" -n istio-ingress get gateway public -o name >/dev/null 2>&1 \
+  || fail 'Gateway istio-ingress/public is missing: apply minikube-infrastructure/ (istio.tf, istio-edge) first.'
 name="roboshop-ingress-edge-$(id -u)"
 label='roboshop.minikube.ingress-owner'
 config_dir="$state_dir/ingress-edge"
@@ -61,12 +63,12 @@ frontend http
   bind :8080
   default_backend minikube_http
 backend minikube_http
-  server node $PROFILE:30080 send-proxy-v2 check resolvers docker init-addr libc,none
+  server node $PROFILE:31080 send-proxy-v2 check resolvers docker init-addr libc,none
 frontend https
   bind :8443
   default_backend minikube_https
 backend minikube_https
-  server node $PROFILE:30443 send-proxy-v2 check resolvers docker init-addr libc,none
+  server node $PROFILE:31443 send-proxy-v2 check resolvers docker init-addr libc,none
 CONFIG
 # Pin the supported HAProxy 3.2 maintenance line. No TLS keys live in this container.
 image=haproxy:3.2-alpine
@@ -87,6 +89,6 @@ else
     fail "Could not publish ports 80/443. Check existing listeners; do not stop unrelated services. Inspect/remove failed container $name before retrying."
 fi
 [[ "$(docker inspect --format '{{.State.Running}}' "$name")" == true ]] || fail "Proxy failed; inspect docker logs $name."
-echo "Host ports 80/443 now forward to $PROFILE via $name."
+echo "Host ports 80/443 now forward to the Istio gateway on $PROFILE (31080/31443) via $name."
 echo 'Allow TCP 80/443 in the Vultr firewall and point jithendar.com DNS to this server.'
-echo 'Manage applications and cert-manager through the argocd/ catalog. The shared jithendar.com certificate and TLSStore live in the jithendar.com repository.'
+echo 'Routing, logins and the wildcard certificate are the Istio edge (deploy/minikube/istio/edge, minikube-infrastructure/istio.tf).'

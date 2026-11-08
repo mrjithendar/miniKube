@@ -1,7 +1,11 @@
-# Traefik, the ingress controller for every public route on mk4 (jithendar.com, /argocd, /grafana, /kiali, ...).
-# Values: deploy/minikube/traefik/values.yaml. NodePorts 30080/30443; the host forwards 80/443 to them
-# (deploy/minikube/expose-ingress.sh), so a values change here restarts the only public entry point.
+# Traefik, being retired: the Istio ingress gateway (istio.tf, istio-edge) is mk4's edge. While traefik_enabled is true
+# it keeps running, still holds the host's ports 30080/30443 until expose-ingress.sh points the host at the gateway,
+# and hands everything it has no route for to the gateway. Set traefik_enabled = false (vars/mk4.tfvars) after the
+# host forwards to the gateway: this uninstalls Traefik and makes the gateway insist on the PROXY protocol. Values:
+# deploy/minikube/traefik/values.yaml.
 resource "helm_release" "traefik" {
+  count = var.traefik_enabled ? 1 : 0
+
   name             = "traefik"
   namespace        = "traefik"
   create_namespace = true
@@ -14,11 +18,16 @@ resource "helm_release" "traefik" {
   timeout = var.helm_timeout
 }
 
+# Same release, now behind count: no reinstall.
+moved {
+  from = helm_release.traefik
+  to   = helm_release.traefik[0]
+}
+
 # mk4's release "traefik" was installed by bootstrap-cluster.sh with Helm before Terraform owned it. Importing adopts
-# that release (no reinstall, no downtime beyond the upgrade to the Git values). Once it is in state this block does
-# nothing. On a fresh cluster there is nothing to import: set adopt_existing_traefik = false.
+# that release. Once it is in state this block does nothing. Never on a fresh cluster (adopt_existing_traefik false).
 import {
-  for_each = var.adopt_existing_traefik ? toset(["traefik/traefik"]) : toset([])
-  to       = helm_release.traefik
+  for_each = var.adopt_existing_traefik && var.traefik_enabled ? toset(["traefik/traefik"]) : toset([])
+  to       = helm_release.traefik[0]
   id       = each.value
 }

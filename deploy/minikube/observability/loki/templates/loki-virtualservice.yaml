@@ -1,0 +1,22 @@
+# /loki on the Istio gateway (a delegate of the jithendar.com routing table, deploy/minikube/istio/edge). Loki has no
+# authentication, so only push and the read endpoints MOKS calls are public; anything else under /loki matches nothing
+# here and gets the site's 404. Each new path is a new public endpoint. The logins (loki-push, loki-read) are on the
+# gateway: edge values.yaml, basicAuth.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: loki
+  namespace: monitoring
+spec:
+  http:
+  - name: loki
+    match:
+    - uri: {exact: /loki/api/v1/push}
+    - uri: {exact: /loki/api/v1/query_range}
+    - uri: {exact: /loki/api/v1/labels}
+    - uri: {exact: /loki/api/v1/format_query}
+    - uri: {prefix: /loki/api/v1/label}
+    route:
+    - destination:
+        host: loki.monitoring.svc.cluster.local
+        port: {number: 3100}

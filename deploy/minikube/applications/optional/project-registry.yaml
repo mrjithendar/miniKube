@@ -32,6 +32,8 @@ spec:
     kind: CronJob
   - group: networking.istio.io
     kind: VirtualService
+  - group: security.istio.io
+    kind: PeerAuthentication   # harbor-registry :5000 PERMISSIVE under mesh-wide STRICT
   - group: cert-manager.io
     kind: Certificate
   - group: cert-manager.io

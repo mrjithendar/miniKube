@@ -151,23 +151,39 @@ jobs:
             echo "CloudNativePG CRDs and namespace postgres-db present"; exit 0
           fi
           echo "::notice::CloudNativePG CRDs or namespace postgres-db missing: applying them first"
-          terraform -chdir=minikube-infrastructure apply -input=false -no-color -auto-approve -lock-timeout=5m \
+          scripts/lib/retry-chart-fetch.sh -- \
+            terraform -chdir=minikube-infrastructure apply -input=false -no-color -auto-approve -lock-timeout=5m \
             -var-file=vars/mk4.tfvars -target=helm_release.local_path_provisioner -target=helm_release.cnpg_operator \
             -target=kubernetes_namespace_v1.postgres_db
           kubectl --request-timeout=20s wait --for=condition=Established --timeout=120s \
             crd/clusters.postgresql.cnpg.io crd/databases.postgresql.cnpg.io crd/poolers.postgresql.cnpg.io
 
+      # Remote charts are downloaded while planning and again while applying; a 5xx or timeout from a chart host
+      # (e.g. 504 from github.com release downloads for the CloudNativePG cluster chart) is retried with backoff by
+      # scripts/lib/retry-chart-fetch.sh. Other failures are not retried.
       - name: terraform plan
         run: |
           set -euo pipefail
           umask 077
-          terraform -chdir=minikube-infrastructure plan -input=false -no-color -lock-timeout=5m \
+          scripts/lib/retry-chart-fetch.sh -- terraform -chdir=minikube-infrastructure plan -input=false -no-color -lock-timeout=5m \
             -var-file=vars/mk4.tfvars -out=tf.tfplan | tee "$RUNNER_TEMP/plan.txt"
           { echo '### terraform plan'; echo '```'; grep -E '^  # |^Plan:|^No changes' "$RUNNER_TEMP/plan.txt" || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: terraform apply
         if: ${{ !inputs.plan_only }}
-        run: terraform -chdir=minikube-infrastructure apply -input=false -no-color -lock-timeout=5m tf.tfplan
+        # A retry re-plans first: after a partial apply the saved plan is stale and Terraform refuses it.
+        run: |
+          set -euo pipefail
+          umask 077
+          scripts/lib/retry-chart-fetch.sh -- bash -c '
+            set -euo pipefail
+            if [[ -e "$1" ]]; then
+              terraform -chdir=minikube-infrastructure plan -input=false -no-color -lock-timeout=5m \
+                -var-file=vars/mk4.tfvars -out=tf.tfplan
+            fi
+            touch "$1"
+            terraform -chdir=minikube-infrastructure apply -input=false -no-color -lock-timeout=5m tf.tfplan
+          ' _ "$RUNNER_TEMP/apply-attempted"
 
       - name: Verify releases
         if: ${{ !inputs.plan_only }}

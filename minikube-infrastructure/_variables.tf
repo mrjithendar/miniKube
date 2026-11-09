@@ -1,6 +1,20 @@
 locals {
   # deploy/minikube in this repository: values files and local charts.
   minikube = "${path.module}/../deploy/minikube"
+
+  # One extra value per local chart: a hash of every file in the chart directory. The helm provider plans only chart
+  # version and values, so without it a template edit under an unchanged Chart.yaml version plans "No changes"
+  # (the /prometheus and /loki VirtualServices never reached mk4, 2026-11-09). The charts ignore the value.
+  local_charts = [
+    "cert-manager/issuers", "istio/edge", "istio/mesh", "observability/grafana/dashboards", "observability/jaeger",
+    "observability/loki", "observability/otel-collector", "observability/prometheus", "postgres/access",
+    "storage/local-path-provisioner",
+  ]
+  chart_checksum = { for dir in local.local_charts : dir => yamlencode({
+    chartChecksum = sha1(join("\n", [
+      for f in sort(fileset("${local.minikube}/${dir}", "**")) : "${f} ${filesha1("${local.minikube}/${dir}/${f}")}"
+    ]))
+  }) }
 }
 
 variable "kubeconfig_path" {

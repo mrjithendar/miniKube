@@ -7,7 +7,7 @@ resource "helm_release" "local_path_provisioner" {
   namespace        = "local-path-storage"
   create_namespace = true
   chart            = "${local.minikube}/storage/local-path-provisioner"
-  values           = [file("${local.minikube}/storage/local-path.yaml")]
+  values           = [file("${local.minikube}/storage/local-path.yaml"), local.chart_checksum["storage/local-path-provisioner"]]
 
   wait    = true
   timeout = var.helm_timeout

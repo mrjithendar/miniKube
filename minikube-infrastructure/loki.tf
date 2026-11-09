@@ -5,6 +5,7 @@ resource "helm_release" "loki" {
   namespace        = "monitoring"
   create_namespace = true
   chart            = "${local.minikube}/observability/loki"
+  values           = [local.chart_checksum["observability/loki"]]
 
   # The live objects were applied by the retired Argo CD Application (Kustomize), without a Helm release.
   take_ownership = true

@@ -5,6 +5,7 @@ resource "helm_release" "jaeger" {
   namespace        = "observability"
   create_namespace = true
   chart            = "${local.minikube}/observability/jaeger"
+  values           = [local.chart_checksum["observability/jaeger"]]
 
   # The live objects were applied by the retired Argo CD Application (Kustomize), without a Helm release.
   take_ownership = true

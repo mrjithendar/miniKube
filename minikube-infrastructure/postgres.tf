@@ -142,6 +142,7 @@ resource "helm_release" "postgres_access" {
   values = [
     file("${local.minikube}/postgres/access/values.yaml"),
     yamlencode({ allowedIps = var.postgres_allowed_ips }),
+    local.chart_checksum["postgres/access"],
   ]
 
   wait    = true

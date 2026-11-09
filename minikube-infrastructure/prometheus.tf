@@ -5,6 +5,7 @@ resource "helm_release" "prometheus" {
   namespace        = "monitoring"
   create_namespace = true
   chart            = "${local.minikube}/observability/prometheus"
+  values           = [local.chart_checksum["observability/prometheus"]]
 
   # The live objects were rendered by the retired Argo CD Application (same release name), without a Helm release.
   take_ownership = true

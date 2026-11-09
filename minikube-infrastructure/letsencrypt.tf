@@ -5,6 +5,7 @@ resource "helm_release" "letsencrypt" {
   name      = "letsencrypt-jithendar"
   namespace = "cert-manager"
   chart     = "${local.minikube}/cert-manager/issuers"
+  values    = [local.chart_checksum["cert-manager/issuers"]]
 
   wait    = true
   timeout = var.helm_timeout

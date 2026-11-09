@@ -88,7 +88,7 @@ resource "helm_release" "istio_edge" {
   namespace = "istio-ingress"
   chart     = "${local.minikube}/istio/edge"
 
-  values = [file("${local.minikube}/istio/edge/values.yaml")]
+  values = [file("${local.minikube}/istio/edge/values.yaml"), local.chart_checksum["istio/edge"]]
   set_sensitive = [for name in local.basic_auth_names : {
     name  = "basicAuthUsers.${name}"
     value = lookup(local.gateway_basic_auth, name, "")
@@ -118,7 +118,7 @@ resource "helm_release" "istio_mesh" {
   name      = "istio-mesh"
   namespace = "istio-system"
   chart     = "${local.minikube}/istio/mesh"
-  values    = [file("${local.minikube}/istio/mesh/values.yaml")]
+  values    = [file("${local.minikube}/istio/mesh/values.yaml"), local.chart_checksum["istio/mesh"]]
 
   wait    = true
   timeout = var.helm_timeout

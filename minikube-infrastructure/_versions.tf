@@ -28,12 +28,9 @@ terraform {
 }
 
 provider "helm" {
-  # Plan the rendered manifests, not only chart versions and values. Without this a template change in a local chart
-  # (deploy/minikube/...) whose Chart.yaml version stayed the same planned "No changes": the delegate
-  # VirtualServices for /prometheus and /loki never reached mk4 (found 2026-11-09).
-  experiments = {
-    manifest = true
-  }
+  # No experiments.manifest: on 2026-11-09 it failed applies with "Provider produced inconsistent result" (objects in
+  # namespaces created by the release, labels Helm adds on adoption, and once another release's manifest). Template
+  # changes in local charts are caught by local.chart_checksum (_variables.tf) instead.
   kubernetes = {
     config_path    = pathexpand(var.kubeconfig_path)
     config_context = var.kube_context

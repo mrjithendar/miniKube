@@ -139,10 +139,9 @@ jobs:
       # A plan of helm_release.postgres_cluster dry-runs its Cluster/Database objects and fails with
       # 'no matches for kind "Cluster"' until the CloudNativePG CRDs exist (README.md, "First install, in stages").
       # Install the operator (and the local-path class its volumes use) on its own first.
-      # Also create namespace postgres-db up front: with experiments.manifest the helm provider leaves a new release's
-      # objects in a not-yet-existing namespace out of the plan, then fails the apply with "Provider produced
-      # inconsistent result ... new element has appeared" (hit 2026-11-09 for cnpg-system and local-path-storage).
-      # A no-op once the CRD and the namespace exist.
+      # Also create namespace postgres-db up front (the release lives there). It was needed while experiments.manifest
+      # was on (removed 2026-11-09: "Provider produced inconsistent result" for objects in new namespaces); kept as a
+      # harmless ordering step. A no-op once the CRD and the namespace exist.
       - name: Bootstrap CloudNativePG CRDs
         if: ${{ !inputs.plan_only }}
         run: |

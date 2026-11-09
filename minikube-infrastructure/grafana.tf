@@ -16,7 +16,7 @@ resource "helm_release" "grafana_dashboards" {
   chart     = "${local.minikube}/observability/grafana/dashboards"
   values = [yamlencode({
     jithendar = local.jithendar_dashboards
-  })]
+  }), local.chart_checksum["observability/grafana/dashboards"]]
 
   take_ownership = true
   wait           = true

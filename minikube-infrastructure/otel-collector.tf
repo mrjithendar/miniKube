@@ -5,6 +5,7 @@ resource "helm_release" "otel_collector" {
   namespace        = "observability"
   create_namespace = true
   chart            = "${local.minikube}/observability/otel-collector"
+  values           = [local.chart_checksum["observability/otel-collector"]]
 
   # The live objects were applied by the retired Argo CD Application (Kustomize), without a Helm release.
   take_ownership = true

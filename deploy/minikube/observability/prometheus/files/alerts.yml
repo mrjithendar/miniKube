@@ -176,3 +176,38 @@ groups:
           severity: warning
         annotations:
           summary: 'Knowledge searches are answered with less than was asked for: {{ $labels.reason }}'
+  - name: redis
+    rules:
+      # Shared Valkey (deploy/minikube/redis): one primary for every application.
+      - alert: ValkeyDown
+        expr: up{job="redis"} == 0 or redis_up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Valkey pod {{ $labels.instance }} is down; on valkey-0 (primary) every application loses Redis'
+          runbook_url: 'https://github.com/mrjithendar/miniKube/blob/master/minikube-infrastructure/README.md#redis-valkey'
+      - alert: ValkeyReplicaMissing
+        expr: max(redis_connected_slaves{job="redis"}) < 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The Valkey primary has {{ $value }} of 2 replicas connected'
+          runbook_url: 'https://github.com/mrjithendar/miniKube/blob/master/minikube-infrastructure/README.md#redis-valkey'
+      # maxmemory-policy volatile-lru: past maxmemory with only TTL-less keys left, writes fail with OOM.
+      - alert: ValkeyMemoryHigh
+        expr: max(redis_memory_used_bytes{job="redis"} / (redis_memory_max_bytes{job="redis"} > 0)) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Valkey uses {{ $value | humanizePercentage }} of maxmemory; writes are refused at 100%'
+          runbook_url: 'https://github.com/mrjithendar/miniKube/blob/master/minikube-infrastructure/README.md#redis-valkey'
+      - alert: ValkeyEvictingKeys
+        expr: sum(increase(redis_evicted_keys_total{job="redis"}[15m])) > 0
+        labels:
+          severity: info
+        annotations:
+          summary: 'Valkey evicted {{ $value | humanize }} TTL keys in 15 min (memory pressure)'
+          runbook_url: 'https://github.com/mrjithendar/miniKube/blob/master/minikube-infrastructure/README.md#redis-valkey'

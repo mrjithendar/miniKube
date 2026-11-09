@@ -1,6 +1,6 @@
 # PostgreSQL on mk4: the CloudNativePG operator and ONE shared 3-instance cluster (primary + 2 replicas, one per node,
 # local-path volumes) in namespace postgres-db for every application, plus its public access
-# (https://jithendar.com/postgres/ Adminer, psql at postgres.jithendar.com:443, both behind an IP allowlist).
+# (https://jithendar.com/postgres/ pgAdmin 4, psql at postgres.jithendar.com:443, both behind an IP allowlist).
 # README.md, "PostgreSQL".
 #
 # Tenancy: each entry of var.postgres_databases gets a database and a login role of the same name that owns it (no
@@ -134,7 +134,31 @@ resource "helm_release" "postgres_cluster" {
   depends_on = [helm_release.cnpg_operator, helm_release.local_path_provisioner, kubernetes_secret_v1.postgres_role]
 }
 
-# Adminer, the TCP route, the gateway allowlists, NetworkPolicies and the metrics Service (local chart).
+# pgAdmin's own login at https://jithendar.com/postgres/ (the chart's ui.adminSecret):
+#   kubectl --context mk4 -n postgres-db get secret postgres-ui-admin -o jsonpath='{.data.password}' | base64 -d
+# pgAdmin stores it in its database on first start only: changing it here later does not change the login (change it
+# in pgAdmin, or delete PVC postgres-ui-data to start over).
+resource "random_password" "postgres_ui_admin" {
+  length  = 24
+  special = false
+}
+
+resource "kubernetes_secret_v1" "postgres_ui_admin" {
+  metadata {
+    name      = "postgres-ui-admin"
+    namespace = kubernetes_namespace_v1.postgres_db.metadata[0].name
+    labels = {
+      "app.kubernetes.io/part-of"    = "postgres-db"
+      "app.kubernetes.io/managed-by" = "terraform"
+    }
+  }
+  data = {
+    email    = var.postgres_ui_admin_email
+    password = random_password.postgres_ui_admin.result
+  }
+}
+
+# pgAdmin, the TCP route, the gateway allowlists, NetworkPolicies and the metrics Service (local chart).
 resource "helm_release" "postgres_access" {
   name      = "postgres-access"
   namespace = kubernetes_namespace_v1.postgres_db.metadata[0].name
@@ -156,5 +180,5 @@ resource "helm_release" "postgres_access" {
   }
 
   # The gateway's TLS server and /postgres route live in the edge chart.
-  depends_on = [helm_release.postgres_cluster, helm_release.istio_edge]
+  depends_on = [helm_release.postgres_cluster, helm_release.istio_edge, kubernetes_secret_v1.postgres_ui_admin]
 }

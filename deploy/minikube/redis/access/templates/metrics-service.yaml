@@ -1,0 +1,15 @@
+# Every pod's exporter (:9121), found by Prometheus through DNS (job "redis" in the Prometheus chart). Headless and
+# with the port declared, so Prometheus's sidecar knows each pod address and sends mTLS (an undeclared port would go
+# out in plain text and be refused under STRICT).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-metrics-pods" .Values.release }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  clusterIP: None
+  selector: {{- include "redis.selector" . | nindent 4 }}
+  ports:
+    - name: tcp-metrics
+      port: 9121
+      targetPort: 9121

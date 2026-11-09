@@ -12,11 +12,18 @@ mock_provider "kubernetes" {
         "loki-read"               = "a:{SHA}AAAAAAAAAAAAAAAAAAAAAAAAAAA="
         "opensearch-dashboards"   = "a:{SHA}AAAAAAAAAAAAAAAAAAAAAAAAAAA="
         "opensearch"              = "a:{SHA}AAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        "redis"                   = "a:{SHA}AAAAAAAAAAAAAAAAAAAAAAAAAAA="
       }
     }
   }
 }
 mock_provider "random" {}
+
+# Every run: the access charts refuse to plan without an allowlist (runs below override these to test that).
+variables {
+  postgres_allowed_ips = ["192.0.2.1/32"]
+  redis_allowed_ips    = ["192.0.2.1/32"]
+}
 
 run "pinned_releases" {
   command = plan
@@ -152,4 +159,96 @@ run "postgres_reserved_names_refused" {
   }
 
   expect_failures = [var.postgres_databases]
+}
+
+run "redis_releases" {
+  command = plan
+
+  variables {
+    postgres_allowed_ips = ["192.0.2.1/32"]
+    redis_allowed_ips    = ["192.0.2.1/32"]
+  }
+
+  assert {
+    condition = (
+      helm_release.redis.version == "0.25.16" &&
+      helm_release.redis.repository == "oci://registry-1.docker.io/cloudpirates" &&
+      helm_release.redis.namespace == "redis" &&
+      helm_release.redis_access.namespace == helm_release.redis.namespace &&
+      kubernetes_namespace_v1.redis.metadata[0].labels["istio-injection"] == "enabled"
+    )
+    error_message = "The Valkey chart is pinned; it and its access chart share namespace redis, which is in the mesh."
+  }
+}
+
+run "redis_without_allowlist_fails" {
+  command = plan
+
+  variables {
+    postgres_allowed_ips = ["192.0.2.1/32"]
+    redis_allowed_ips    = []
+  }
+
+  expect_failures = [helm_release.redis_access]
+}
+
+run "redis_tenants_get_a_scoped_user_and_credentials" {
+  command = plan
+
+  variables {
+    postgres_allowed_ips = ["192.0.2.1/32"]
+    redis_allowed_ips    = ["192.0.2.1/32"]
+    redis_tenants = {
+      shop = { namespace = "shop-ns", databases = [3] }
+      blog = { namespace = "blog-ns", databases = [4, 5] }
+    }
+  }
+
+  assert {
+    condition = (
+      kubernetes_secret_v1.redis_app["blog"].metadata[0].namespace == "blog-ns" &&
+      kubernetes_secret_v1.redis_app["blog"].metadata[0].name == "redis-blog-credentials" &&
+      kubernetes_secret_v1.redis_app["blog"].data.host == "valkey-master.redis.svc.cluster.local" &&
+      kubernetes_secret_v1.redis_app["blog"].data.db == "4" &&
+      kubernetes_secret_v1.redis_app["blog"].data.databases == "4,5"
+    )
+    error_message = "Each tenant gets redis-<name>-credentials in its namespace, pointing at the master proxy and its first database."
+  }
+
+  assert {
+    condition = (
+      local.redis_tenant_acl["blog"] == "~* &* +@all -@admin -flushall -swapdb db=4,5" &&
+      local.redis_tenant_acl["shop"] == "~* &* +@all -@admin -flushall -swapdb db=3" &&
+      length(local.redis_acl_lines) == 3 &&
+      length(local.redis_overrides.config.extraConfig) == length(local.redis_values.config.extraConfig) + 3
+    )
+    error_message = "Each tenant's user is limited to its own databases and has no admin command; the file's config lines are kept."
+  }
+}
+
+run "redis_shared_database_refused" {
+  command = plan
+
+  variables {
+    postgres_allowed_ips = ["192.0.2.1/32"]
+    redis_allowed_ips    = ["192.0.2.1/32"]
+    redis_tenants = {
+      a = { namespace = "x", databases = [1] }
+      b = { namespace = "y", databases = [1, 2] }
+    }
+  }
+
+  expect_failures = [var.redis_tenants]
+}
+
+run "redis_reserved_name_refused" {
+  command = plan
+
+  variables {
+    postgres_allowed_ips = ["192.0.2.1/32"]
+    redis_allowed_ips    = ["192.0.2.1/32"]
+    redis_tenants        = { default = { namespace = "x", databases = [1] } }
+  }
+
+  expect_failures = [var.redis_tenants]
 }

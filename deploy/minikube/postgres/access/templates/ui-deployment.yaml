@@ -1,9 +1,11 @@
-# Adminer (Docker Official Image) at https://jithendar.com{{ .Values.ui.prefix }}/. It holds no credentials: sign in with
-# System "PostgreSQL", server {{ .Values.cluster }}-rw, an application's login (Secret db-<name> in this namespace,
-# database <name>) or {{ .Values.cluster }}-superuser. Its NetworkPolicy lets it reach only this cluster, so the form's "server" field cannot probe anything
-# else. The image serves /var/www/html at "/"; the files are copied under the prefix so session cookies stay scoped to
-# it (same trick as jithendar.com's /db).
-{{- $prefix := trimPrefix "/" .Values.ui.prefix }}
+# pgAdmin 4 (dpage/pgadmin4) at https://jithendar.com{{ .Values.ui.prefix }}/. Two logins:
+#   1. pgAdmin itself: email and password from Secret {{ .Values.ui.adminSecret }} in this namespace (Terraform,
+#      postgres.tf): kubectl --context mk4 -n {{ .Release.Namespace }} get secret {{ .Values.ui.adminSecret }} -o jsonpath='{.data.password}' | base64 -d
+#   2. the database: server "{{ .Values.cluster }}" is pre-registered (ui-servers-configmap.yaml) with user postgres; open
+#      it with {{ .Values.cluster }}-superuser's password, or edit its Connection tab to an application's login
+#      (Secret db-<name>, database <name>).
+# SCRIPT_NAME serves it under the prefix (gunicorn strips it), so its cookies are scoped there too. Its NetworkPolicy
+# lets it reach only this cluster. Settings, saved servers and query history live on the postgres-ui-data volume.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,6 +15,9 @@ metadata:
     app: postgres-ui
 spec:
   replicas: 1
+  # One ReadWriteOnce volume: the old pod must let go of it first.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: postgres-ui
@@ -20,53 +25,108 @@ spec:
     metadata:
       labels:
         app: postgres-ui
+      annotations:
+        checksum/servers: {{ include (print $.Template.BasePath "/ui-servers-configmap.yaml") . | sha256sum }}
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       securityContext:
+        # The image's pgadmin user.
         runAsNonRoot: true
-        runAsUser: 65534
-        runAsGroup: 65534
+        runAsUser: 5050
+        runAsGroup: 5050
+        fsGroup: 5050
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: adminer
+        - name: pgadmin
           image: {{ .Values.ui.image }}
-          imagePullPolicy: Always
-          command:
-            - sh
-            - -c
-            - rm -rf /tmp/www && mkdir -p /tmp/www && cp -R /var/www/html /tmp/www/{{ $prefix }} && exec php -S [::]:8080 -t /tmp/www
+          imagePullPolicy: IfNotPresent
           env:
-            - name: ADMINER_DEFAULT_SERVER
-              value: {{ printf "%s-rw" .Values.cluster }}
+            - name: PGADMIN_DEFAULT_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ui.adminSecret }}
+                  key: email
+            - name: PGADMIN_DEFAULT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ui.adminSecret }}
+                  key: password
+            - name: SCRIPT_NAME
+              value: {{ .Values.ui.prefix | quote }}
+            # Non-root: no port 80.
+            - name: PGADMIN_LISTEN_PORT
+              value: "8080"
+            # Read on first start only (when pgAdmin creates its database); later edits in the UI are kept.
+            - name: PGADMIN_SERVER_JSON_FILE
+              value: /pgadmin4/servers.json
+            # No mail relay here (and postfix would need root).
+            - name: PGADMIN_DISABLE_POSTFIX
+              value: "true"
+            # PGADMIN_CONFIG_* are Python expressions merged into pgAdmin's config.
+            # Ties the session to the client address, which is whichever ingress gateway pod forwarded the request:
+            # sessions would drop at random.
+            - name: PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION
+              value: "False"
+            - name: PGADMIN_CONFIG_SESSION_COOKIE_SECURE
+              value: "True"
+            # TLS ends at the gateway; trust its X-Forwarded-Proto so redirects stay https.
+            - name: PGADMIN_CONFIG_PROXY_X_PROTO_COUNT
+              value: "1"
+            # Its egress is limited to this cluster.
+            - name: PGADMIN_CONFIG_UPGRADE_CHECK_ENABLED
+              value: "False"
+            # Default 3 locks the account (unlocking needs the pod's setup.py); the gateway allowlist already limits
+            # who can try.
+            - name: PGADMIN_CONFIG_MAX_LOGIN_ATTEMPTS
+              value: "10"
           ports:
             - containerPort: 8080
               name: http
+          startupProbe:
+            httpGet:
+              path: {{ printf "%s/misc/ping" .Values.ui.prefix }}
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: {{ printf "%s/misc/ping" .Values.ui.prefix }}
               port: http
             periodSeconds: 10
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: {{ printf "%s/misc/ping" .Values.ui.prefix }}
               port: http
             periodSeconds: 20
+            timeoutSeconds: 5
           resources:
             requests:
-              cpu: 20m
-              memory: 64Mi
+              cpu: 50m
+              memory: 256Mi
             limits:
-              cpu: 500m
-              memory: 384Mi
+              cpu: "1"
+              memory: 1Gi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
-            readOnlyRootFilesystem: true
+              # The image's python carries this file capability; exec fails if it is outside the bounding set.
+              add: [NET_BIND_SERVICE]
+            # The entrypoint writes /pgadmin4/config_distro.py.
+            readOnlyRootFilesystem: false
           volumeMounts:
-            - name: tmp
-              mountPath: /tmp
+            - name: data
+              mountPath: /var/lib/pgadmin
+            - name: servers
+              mountPath: /pgadmin4/servers.json
+              subPath: servers.json
+              readOnly: true
       volumes:
-        - name: tmp
-          emptyDir:
-            sizeLimit: 64Mi
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-ui-data
+        - name: servers
+          configMap:
+            name: postgres-ui-servers

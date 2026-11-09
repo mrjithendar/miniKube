@@ -1,7 +1,7 @@
 # Release postgres-access, namespace postgres-db (minikube-infrastructure/postgres.tf), beside the CloudNativePG cluster.
 #
 # A URL path cannot carry the PostgreSQL protocol (it is not HTTP), so there are two ways in:
-#   https://jithendar.com/postgres/   Adminer, a web client (sign in with a database login)
+#   https://jithendar.com/postgres/   pgAdmin 4, a web client (pgAdmin login, then a database login)
 #   postgres.jithendar.com:443        psql and other clients: the Istio gateway terminates TLS (wildcard certificate,
 #                                     ALPN "postgresql" for libpq's direct TLS) and forwards TCP to the primary:
 #     psql "host=postgres.jithendar.com port=443 dbname=<name> user=<name> sslmode=verify-full sslrootcert=system sslnegotiation=direct"
@@ -14,7 +14,11 @@ cluster: postgres-cluster
 ui:
   # Path on jithendar.com; must match the edge routing table's entry (route "postgres").
   prefix: /postgres
-  image: adminer:latest
+  image: dpage/pgadmin4:9.19.0
+  # pgAdmin's own login (keys email, password); Terraform creates it (postgres.tf).
+  adminSecret: postgres-ui-admin
+  storageClass: local-path
+  storageSize: 1Gi
 
 tcp:
   host: postgres.jithendar.com

@@ -1,0 +1,143 @@
+# Valkey (Redis-compatible) release "valkey" in namespace redis (chart cloudpirates/valkey, official valkey/valkey
+# image). Terraform: minikube-infrastructure/redis.tf. Public access and mesh policy: ./access (release redis-access).
+#
+# The one Redis for every application on mk4 (replacing each application's own Redis pod):
+#   - three pods (valkey-0..2), each on its own node (required anti-affinity) with a local-path volume pinned to it,
+#     AOF every second plus RDB snapshots;
+#   - Sentinel in every pod (quorum 2 of 3) promotes a replica when the primary stops answering for 5 s;
+#   - an HAProxy sidecar in every pod forwards to whichever pod is primary right now, so applications keep one
+#     address across failovers and need no Sentinel support;
+#   - Istio sidecars, STRICT mTLS and an enforced ALLOW policy (namespace label in redis.tf, policies in ./access).
+# Services:
+#   valkey-master.redis.svc:6379   the current primary, through HAProxy: what applications use (uri in their Secret)
+#   valkey.redis.svc:6379          any pod, replicas included (read-only commands only; writes there fail)
+#   valkey-sentinel.redis.svc:26379, valkey-headless.redis.svc   Sentinel-aware clients, tooling, replication
+#
+# Tenancy is not here: Terraform appends one ACL user per entry of var.redis_tenants to config.extraConfig
+# (redis.tf), each limited to its own database numbers (Valkey 9 ACL "db=") and without admin commands.
+fullnameOverride: valkey
+
+architecture: replication
+replicaCount: 3
+
+image:
+  imagePullPolicy: IfNotPresent
+
+auth:
+  enabled: true
+  # The admin user ("default"): replication, Sentinel, HAProxy health checks, the exporter. Written by redis.tf.
+  existingSecret: valkey-users
+  existingSecretPasswordKey: default
+
+config:
+  maxMemory: 512mb
+  # Shared by caches and queues: evict only keys that carry a TTL (sessions, caches, rate limits), never queue entries
+  # (Harbor jobservice, the practice executor) that have none. Memory full of TTL-less keys refuses writes (OOM)
+  # instead of losing jobs: alert ValkeyMemoryHigh.
+  maxMemoryPolicy: volatile-lru
+  save: "3600 1 300 100 60 10000"
+  # redis.tf concatenates the tenants' "user" lines after these (a list replaces, it does not merge).
+  extraConfig:
+    # Each tenant owns one or more database numbers (var.redis_tenants); 32 leaves room.
+    - databases 32
+    - appendonly yes
+    - appendfsync everysec
+    - aof-use-rdb-preamble yes
+    # Full syncs stream from memory instead of writing an RDB to the primary's disk first.
+    - repl-diskless-sync yes
+    - repl-diskless-sync-delay 2
+    - repl-backlog-size 64mb
+    # Big-key deletes and expiry in a background thread: one tenant's large key must not stall the others.
+    - lazyfree-lazy-eviction yes
+    - lazyfree-lazy-expire yes
+    - lazyfree-lazy-server-del yes
+    - lazyfree-lazy-user-del yes
+    - replica-lazy-flush yes
+    # Drop clients that vanished without closing (pods killed mid-connection); cap clients well below the default.
+    - tcp-keepalive 60
+    - maxclients 2000
+    - slowlog-log-slower-than 10000
+    - slowlog-max-len 256
+    - latency-tracking yes
+    # Disabled outright, for every user including admin: nobody needs them on a shared server.
+    - enable-debug-command no
+    - enable-module-command no
+
+sentinel:
+  enabled: true
+  config:
+    # Pods find each other by their stable DNS names (headless Service), which also keeps Istio on mTLS.
+    announceHostnames: true
+  masterName: mk4
+  quorum: 2
+  # 5 s, not the chart's 1.5 s: a sidecar restart or a slow node must not start a failover.
+  downAfterMilliseconds: 5000
+  failoverTimeout: 30000
+  parallelSyncs: 1
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}
+  # The primary's preStop asks Sentinel to fail over first: rolling updates move the primary without dropping writes.
+  valkeyShutdownWaitFailover: true
+  preStop:
+    enabled: true
+  masterProxy:
+    enabled: true
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 128Mi}
+
+persistence:
+  enabled: true
+  # Every application's keys, three times. maxmemory caps the dataset; AOF rewrites need about twice that.
+  # local-path does not enforce the size: the volumes share mk4's one disk.
+  storageClass: local-path
+  size: 2Gi
+
+# Keep the data when the StatefulSet is deleted or scaled down; local-path's Retain then keeps the PV too.
+persistentVolumeClaimRetentionPolicy:
+  enabled: true
+  whenDeleted: Retain
+  whenScaled: Retain
+
+affinity:
+  podAntiAffinity:
+    # minikube nodes have no zone label: spread by node.
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - topologyKey: kubernetes.io/hostname
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: valkey
+            app.kubernetes.io/instance: valkey
+
+# At most one pod down for voluntary disruptions (node drains): Sentinel keeps its quorum of 2.
+pdb:
+  enabled: true
+  minAvailable: 2
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  # maxmemory (512mb) + replication and client buffers + the fork during AOF rewrite.
+  limits:
+    memory: 1Gi
+initContainer:
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {memory: 64Mi}
+
+# Failover hand-off in preStop needs longer than the default 30 s.
+terminationGracePeriodSeconds: 60
+
+podAnnotations:
+  # Envoy must outlive Valkey's preStop failover, and start before the init container asks Sentinel for the master.
+  proxy.istio.io/config: |
+    holdApplicationUntilProxyStarts: true
+    terminationDrainDuration: 45s
+
+metrics:
+  enabled: true
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}

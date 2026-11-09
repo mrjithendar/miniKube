@@ -1,0 +1,18 @@
+{{- include "redis.requireAllowlist" . }}
+# {{ .Values.tcp.host }}: decided on the TLS server name, before any byte reaches Valkey.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: redis-tcp-allowlist
+  namespace: {{ .Values.gatewayNamespace }}
+spec:
+  selector:
+    matchLabels: {{ toYaml .Values.gatewaySelector | nindent 6 }}
+  action: DENY
+  rules:
+    - from:
+        - source:
+            notRemoteIpBlocks: {{ toYaml .Values.allowedIps | nindent 14 }}
+      when:
+        - key: connection.sni
+          values: [{{ .Values.tcp.host | quote }}]

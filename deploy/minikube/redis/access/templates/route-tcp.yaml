@@ -1,0 +1,20 @@
+# {{ .Values.tcp.host }}:443 → the current primary. The Gateway's TLS server (edge chart, gateway.tls) terminates TLS and
+# matches this host by SNI; the bytes after that are plain Redis protocol, sent on as mTLS to {{ .Values.release }}-master.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: redis-tcp
+  namespace: {{ .Release.Namespace }}
+spec:
+  hosts:
+    - {{ .Values.tcp.host }}
+  gateways:
+    - {{ printf "%s/public" .Values.gatewayNamespace }}
+  tcp:
+    - match:
+        - port: 443
+      route:
+        - destination:
+            host: {{ printf "%s-master.%s.svc.cluster.local" .Values.release .Release.Namespace }}
+            port:
+              number: 6379

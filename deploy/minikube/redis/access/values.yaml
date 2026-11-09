@@ -1,0 +1,35 @@
+# Release redis-access, namespace redis (minikube-infrastructure/redis.tf), beside the Valkey release.
+#
+# The Redis protocol is not HTTP, so a URL path cannot carry it. Two ways in, both refused on the gateway unless the
+# client address is in allowedIps:
+#   https://jithendar.com/redis/   RedisInsight, a web console, behind the gateway login "redis" as well
+#                                  (Secret redis/redis-ui-auth, edge chart basicAuth)
+#   redis.jithendar.com:443        redis-cli and other clients: the Istio gateway terminates TLS (wildcard
+#                                  certificate) and forwards TCP to the current primary:
+#     redis-cli --tls --sni redis.jithendar.com -h redis.jithendar.com -p 443 --user <name> --askpass
+# The Gateway's TLS server for the host and the /redis route are in deploy/minikube/istio/edge/values.yaml.
+
+# Valkey release (deploy/minikube/redis/values.yaml): Service and pod names derive from it.
+release: valkey
+
+# Namespaces whose workloads may open a Redis connection (each still needs its own ACL login): set by Terraform from
+# var.redis_tenants. Anything else is refused by the sidecar (AuthorizationPolicy), before any Redis byte.
+clientNamespaces: []
+
+ui:
+  # Path on jithendar.com; must match the edge routing table's entry (route "redis").
+  prefix: /redis
+  image: redis/redisinsight:3.8.0
+  # ACL user the console signs in as (redis.tf): every database, no admin command. Secret key in valkey-users.
+  user: console
+
+tcp:
+  host: redis.jithendar.com
+
+# Client addresses allowed through /redis and redis.jithendar.com (CIDRs). Set by Terraform (var.redis_allowed_ips).
+# Rendering fails when empty: never open, never silently locked.
+allowedIps: []
+
+gatewayNamespace: istio-ingress
+gatewaySelector:
+  istio: ingressgateway

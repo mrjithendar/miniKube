@@ -1,0 +1,54 @@
+# RedisInsight: in from the gateway only; out to DNS, istiod and this release's pods only, so its "add database" form
+# cannot probe anything else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-ui
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: redis-ui
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.gatewayNamespace }}
+          podSelector:
+            matchLabels: {{ toYaml .Values.gatewaySelector | nindent 14 }}
+      ports:
+        - {port: 5540, protocol: TCP}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - {port: 15090, protocol: TCP}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app: istiod
+      ports:
+        - {port: 15012, protocol: TCP}
+    - to:
+        - podSelector:
+            matchLabels: {{- include "redis.selector" . | nindent 14 }}
+      ports:
+        - {port: 6379, protocol: TCP}
+        - {port: 6380, protocol: TCP}
+        - {port: 26379, protocol: TCP}

@@ -56,6 +56,19 @@ extraScrapeConfigs:
     relabel_configs:
       - target_label: service
         replacement: postgres-cluster
+  # Shared Valkey (namespace redis, deploy/minikube/redis): every pod's redis_exporter through the headless Service
+  # valkey-metrics-pods (redis/access), which declares :9121 so the scrape goes out as mTLS (namespace redis is STRICT).
+  # redis_connected_slaves, redis_memory_used_bytes and redis_evicted_keys_total are the ones to watch. The access
+  # chart's AuthorizationPolicy and NetworkPolicy admit monitoring on 9121.
+  - job_name: redis
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names: ["valkey-metrics-pods.redis.svc.cluster.local"]
+        type: A
+        port: 9121
+    relabel_configs:
+      - target_label: service
+        replacement: valkey
   - job_name: loki
     static_configs:
       - targets: ["loki.monitoring.svc.cluster.local:3100"]

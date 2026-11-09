@@ -1,0 +1,5 @@
+apiVersion: v2
+name: redis-access
+description: mk4's shared Valkey beyond the chart itself - Istio mTLS and authorization, NetworkPolicies, the metrics Service, RedisInsight at /redis and redis-cli at redis.jithendar.com:443 behind an IP allowlist.
+type: application
+version: 0.1.0

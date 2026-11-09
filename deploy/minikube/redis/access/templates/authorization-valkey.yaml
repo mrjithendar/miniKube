@@ -1,0 +1,36 @@
+# Enforced (no dry-run, unlike the mesh's allow-known-callers): an ALLOW policy makes the sidecar refuse everything
+# that matches no rule. Identities come from mTLS (STRICT, peerauthentication.yaml), so a namespace cannot be faked.
+#
+# Valkey pods:
+#   6379 (Valkey) and 6380 (HAProxy, behind valkey-master): the client namespaces, the gateway's TCP route, and this
+#     namespace (replication, HAProxy checks, Sentinel, RedisInsight);
+#   26379 (Sentinel): this namespace and the client namespaces (Sentinel-aware clients);
+#   9121 (exporter): Prometheus.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: valkey
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels: {{- include "redis.selector" . | nindent 6 }}
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces: {{ toJson (concat (list .Release.Namespace .Values.gatewayNamespace) .Values.clientNamespaces | uniq) }}
+      to:
+        - operation:
+            ports: ["6379", "6380"]
+    - from:
+        - source:
+            namespaces: {{ toJson (prepend .Values.clientNamespaces .Release.Namespace | uniq) }}
+      to:
+        - operation:
+            ports: ["26379"]
+    - from:
+        - source:
+            namespaces: [monitoring]
+      to:
+        - operation:
+            ports: ["9121"]

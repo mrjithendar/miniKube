@@ -7,7 +7,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   http:
-    # /postgres → /postgres/ (Adminer's links are relative to the folder).
+    # /postgres → /postgres/ (pgAdmin's links are under the folder).
     - name: postgres-slash
       match:
         - uri:
@@ -23,8 +23,8 @@ spec:
         response:
           set:
             X-Robots-Tag: noindex, nofollow
-            Cache-Control: no-store
-            X-Frame-Options: DENY
+            # pgAdmin frames its own pages (SAMEORIGIN) and sets its own Cache-Control (its JavaScript is large).
+            X-Frame-Options: SAMEORIGIN
             X-Content-Type-Options: nosniff
             Referrer-Policy: no-referrer
       route:

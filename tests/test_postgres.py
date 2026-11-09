@@ -84,3 +84,21 @@ def test_tenants_are_terraform_variables_not_chart_values():
     tfvars = (ROOT / 'minikube-infrastructure/vars/mk4.tfvars').read_text()
     for name, namespace in {'jithendar': 'jithendar', 'moks': 'moks', 'registry': 'harbor', 'shipping': 'roboshop-ai'}.items():
         assert f'{name}' in tfvars and f'namespace = "{namespace}"' in tfvars
+
+
+def test_ui_is_pgadmin_under_the_prefix_with_its_state_kept():
+    docs = allowed()
+    pod = of(docs, 'Deployment', 'postgres-ui')['spec']['template']['spec']
+    c = pod['containers'][0]
+    env = {e['name']: e.get('value', e.get('valueFrom')) for e in c['env']}
+    assert c['image'].startswith('dpage/pgadmin4:') and not c['image'].endswith(':latest')
+    assert env['SCRIPT_NAME'] == '/postgres' and env['PGADMIN_LISTEN_PORT'] == '8080'
+    # two gateway pods forward requests: a session tied to the client address would drop
+    assert env['PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION'] == 'False'
+    assert env['PGADMIN_DEFAULT_PASSWORD'] == {'secretKeyRef': {'name': 'postgres-ui-admin', 'key': 'password'}}
+    assert c['readinessProbe']['httpGet']['path'] == '/postgres/misc/ping'
+    pvc = of(docs, 'PersistentVolumeClaim', 'postgres-ui-data')
+    assert pvc['metadata']['annotations']['helm.sh/resource-policy'] == 'keep'
+    assert {'name': 'data', 'persistentVolumeClaim': {'claimName': 'postgres-ui-data'}} in pod['volumes']
+    route = of(docs, 'VirtualService', 'postgres-ui')['spec']['http'][1]
+    assert route['headers']['response']['set']['X-Frame-Options'] == 'SAMEORIGIN'

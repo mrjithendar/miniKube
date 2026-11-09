@@ -1,6 +1,6 @@
 # Namespace {{ .Release.Namespace }} has no Istio sidecars (CloudNativePG manages its own pods and TLS), so the gateway
 # talks to these pods in plain text inside the cluster.
-# Adminer: only the gateway may reach it, and it may reach only DNS and this cluster.
+# pgAdmin: only the gateway may reach it, and it may reach only DNS and this cluster.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

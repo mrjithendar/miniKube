@@ -1,0 +1,99 @@
+# RedisInsight at https://jithendar.com{{ .Values.ui.prefix }}/, served under that path (RI_PROXY_PATH). One connection is
+# preconfigured: the current primary (valkey-master) as ACL user "{{ .Values.ui.user }}" - every database, no admin
+# command (redis.tf). Its state (settings, the connection's encrypted password) is in an emptyDir: nothing survives a
+# restart and nothing is kept on a node's disk. Reached only through the gateway's allowlist and login.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: redis-ui
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redis-ui
+  template:
+    metadata:
+      labels:
+        app: redis-ui
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redisinsight
+          image: {{ .Values.ui.image }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RI_APP_PORT
+              value: "5540"
+            - name: RI_PROXY_PATH
+              value: {{ .Values.ui.prefix | quote }}
+            - name: RI_ACCEPT_TERMS_AND_CONDITIONS
+              value: "true"
+            - name: RI_ANALYTICS_ENABLED
+              value: "false"
+            - name: RI_STDOUT_LOGGER
+              value: "true"
+            - name: RI_FILES_LOGGER
+              value: "false"
+            - name: RI_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef: {name: redis-ui-auth, key: encryption-key}
+            - name: RI_REDIS_HOST
+              value: {{ printf "%s-master.%s.svc.cluster.local" .Values.release .Release.Namespace }}
+            - name: RI_REDIS_PORT
+              value: "6379"
+            - name: RI_REDIS_ALIAS
+              value: mk4 (primary)
+            - name: RI_REDIS_USERNAME
+              value: {{ .Values.ui.user | quote }}
+            - name: RI_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: valkey-users, key: {{ .Values.ui.user | quote }}}
+          ports:
+            - containerPort: 5540
+              name: http
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 20m
+              memory: 192Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi

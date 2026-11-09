@@ -27,13 +27,15 @@ gateway:
     - harbor/registry.jithendar.com
     - jfrog/jfrog.jithendar.com
   # TLS terminated here, then plain TCP (VirtualService tcp routes): PostgreSQL at db.jithendar.com:443 (the site's
-  # database) and postgres.jithendar.com:443 (the CloudNativePG cluster, deploy/minikube/postgres/access).
+  # database) and postgres.jithendar.com:443 (the CloudNativePG cluster, deploy/minikube/postgres/access); Redis at
+  # redis.jithendar.com:443 (the shared Valkey, deploy/minikube/redis/access; redis-cli --tls --sni, no ALPN).
   tls:
     - host: jithendar/db.jithendar.com
       # libpq 17+ with sslnegotiation=direct requires the server to select ALPN "postgresql".
       alpn: [postgresql]
     - host: postgres-db/postgres.jithendar.com
       alpn: [postgresql]
+    - host: redis/redis.jithendar.com
 
 # The routing table for jithendar.com. First match wins, so a prefix that begins with another one comes first
 # (/opensearch-dashboards before /opensearch). A delegate that does not exist (an application not installed) drops
@@ -59,6 +61,7 @@ root:
     - {name: roboshop, prefix: /roboshop, to: roboshop-ai/roboshop}
     - {name: db, prefix: /db, to: jithendar/jithendar-db-ui}
     - {name: postgres, prefix: /postgres, to: postgres-db/postgres-ui}
+    - {name: redis, prefix: /redis, to: redis/redis-ui}
     - {name: vault-ui, prefix: /ui, to: vault/vault}
     - {name: vault-api, prefix: /v1, to: vault/vault}
   # Everything else.
@@ -77,6 +80,8 @@ basicAuth:
   - {name: loki-read, prefix: /loki, except: /loki/api/v1/push, from: monitoring/loki-read-auth}
   - {name: opensearch-dashboards, prefix: /opensearch-dashboards, from: moks/moks-opensearch-dashboards-auth}
   - {name: opensearch, prefix: /opensearch, except: /opensearch-dashboards, from: moks/moks-opensearch-auth}
+  # RedisInsight has no login of its own (it is preconfigured with the console user): IP allowlist plus this.
+  - {name: redis, prefix: /redis, from: redis/redis-ui-auth}
 # Set by Terraform from that Secret: {<name>: "<user>:{SHA}<base64 sha1>"}. Rendering fails if one is missing.
 basicAuthUsers: {}
 

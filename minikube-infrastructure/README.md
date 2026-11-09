@@ -21,7 +21,8 @@ only the AppProject `mk-platform` and the opt-in `harbor`.
 | `jaeger.tf` | `jaeger` | local `deploy/minikube/observability/jaeger` | `observability` | `jaeger.yaml` |
 | `local-path.tf` | `local-path-provisioner` | vendored `deploy/minikube/storage/local-path-provisioner` (rancher v0.0.37) | `local-path-storage` | `deploy/minikube/storage/local-path.yaml`; StorageClass `local-path` (node-pinned, Retain, not default) |
 | `postgres.tf` | `cnpg` | cnpg `cloudnative-pg` 0.29.1 (operator 1.30.1) | `cnpg-system` | `deploy/minikube/postgres/operator.yaml` |
-| `postgres.tf` | `postgres-cluster`, `postgres-access` | cnpg `cluster` 0.9.0; local `deploy/minikube/postgres/access` | `postgres-db` | `deploy/minikube/postgres/cluster.yaml` + per-application databases/roles/Secrets from `postgres_databases`; Adminer, TCP route, gateway allowlists (`postgres_allowed_ips`), NetworkPolicies, metrics Service |
+| `postgres.tf` | `postgres-cluster`, `postgres-access` | cnpg `cluster` 0.9.0; local `deploy/minikube/postgres/access` | `postgres-db` | `deploy/minikube/postgres/cluster.yaml` + per-application databases/roles/Secrets from `postgres_databases`; pgAdmin 4 (+ admin Secret `postgres-ui-admin`), TCP route, gateway allowlists (`postgres_allowed_ips`), NetworkPolicies, metrics Service |
+| `redis.tf` | `valkey`, `redis-access` | cloudpirates `valkey` 0.25.16 (Valkey 9.1, OCI); local `deploy/minikube/redis/access` | `redis` | `deploy/minikube/redis/values.yaml` + post-renderer `postrender-haproxy.sh`; per-application ACL users and Secrets from `redis_tenants`; STRICT mTLS + enforced AuthorizationPolicy, RedisInsight (gateway login `redis-ui-auth`), TCP route, gateway allowlists (`redis_allowed_ips`), NetworkPolicies, metrics Service |
 
 `versions.tf` (providers, S3 backend), `variables.tf` (`kubeconfig_path` `~/.kube/config`, `kube_context` `mk4`,
 `helm_timeout` 600 s, `jithendar_com_dir` `../../jithendar.com`, `adopt_existing_traefik` false; `true` in mk4.tfvars), `vars/mk4.tfvars`, `tests/` (`terraform test`
@@ -76,7 +77,7 @@ empty until each application moves.
 | From | Address |
 |---|---|
 | applications | `uri` from `postgres-db-credentials` (PgBouncer); `-rw` (primary), `-ro` (replicas), `-r` (any) for tools |
-| browser | https://jithendar.com/postgres/ (Adminer: System PostgreSQL, server `postgres-cluster-rw`, an application's login) |
+| browser | https://jithendar.com/postgres/ (pgAdmin 4: log in with Secret `postgres-db/postgres-ui-admin`, then open server `postgres-cluster` with `postgres-cluster-superuser`'s password or an application's login) |
 | psql | `psql "host=postgres.jithendar.com port=443 dbname=<name> user=<name> sslmode=verify-full sslrootcert=system sslnegotiation=direct"` (libpq 17+) |
 
 PostgreSQL is not HTTP, so the path `/postgres` can only serve the web client; database clients use the hostname,
@@ -116,6 +117,97 @@ The hostname needs a DNS record: `postgres.jithendar.com` pointing at the host l
 remain; `$K get pv | grep local-path`, then delete the PV once the data is no longer needed. The 10Gi size is not
 enforced by `local-path`; every volume shares mk4's one disk. A node that is gone keeps its instance Pending; deleting
 that instance's PVC (or `kubectl cnpg destroy`) makes the operator rebuild it on another node from the primary.
+
+## Redis (Valkey)
+
+**One Redis for every application on mk4.** StatefulSet `valkey` in namespace `redis`: Valkey 9.1 (Redis 7.2
+protocol), three pods on three nodes, each with a 2Gi `local-path` volume (AOF every second plus RDB). Each pod runs
+Valkey, Sentinel, an HAProxy "master proxy", the exporter and an Istio sidecar. Sentinel (quorum 2 of 3) promotes a
+replica after 5 s without an answer from the primary. HAProxy in every pod forwards to whichever pod is primary right
+now, so applications use one address and need no Sentinel support. A rolling update or pod deletion hands the primary
+over first (preStop failover): measured on 2026-11-09, deleting the primary cost a writing client 2 failed writes over
+about 4 s, after which writes resumed on the new primary through the same address.
+
+**Security.** Namespace `redis` is in the mesh with STRICT mTLS (its own PeerAuthentication) and an enforced (not
+dry-run) AuthorizationPolicy: only the tenants' namespaces, the gateway's TCP route and Prometheus get in, each on its
+own ports; a pod without a sidecar is refused. NetworkPolicies add the same rules on the pod network. On top, every
+application has its own ACL user:
+
+- user `<name>` may `SELECT` only its own database numbers (Valkey ACL `db=`) and has no admin command (`-@admin`:
+  CONFIG, SHUTDOWN, REPLICAOF, MONITOR, ACL, SAVE, ...) and no FLUSHALL or SWAPDB. FLUSHDB stays: it reaches only its
+  own database;
+- a random password, kept in the encrypted Terraform state, in Secret `redis/valkey-users` (key `<name>`); the server
+  holds only its SHA-256 (`user` lines in `valkey.conf`);
+- Secret `<ns>/redis-<name>-credentials` with `host` (`valkey-master.redis.svc.cluster.local`), `port`, `username`,
+  `password`, `db` (its first database), `databases`, `uri` (`redis://<name>:<password>@valkey-master...:6379/<db>`).
+
+Reserved users: `default` (admin: replication, Sentinel, HAProxy checks, exporter) and `console` (RedisInsight: every
+database, no admin command, no flush). Pub/Sub channels are shared by every user (`&*`): channel names are not
+isolated, keys are. Adding or changing a tenant rolls the StatefulSet (primary handed over first).
+
+| Tenant (`redis_tenants`) | Namespace | Databases | Replaces |
+|---|---|---|---|
+| `jithendar` | `jithendar` | 0 | `jithendar-redis` (site cache, sessions, rate limits) |
+| `practice` | `jithendar` | 1 | `practice-redis` (practice executor queue) |
+| `harbor` | `harbor` | 2, 3, 4, 5 | `harbor-redis` databases 0 (core), 1 (jobservice), 2 (registry), 5 (trivy) |
+| `roboshop` | `roboshop-ai` | 6 | `roboshop-ai/redis` (cart, shipping cache) |
+
+Argo CD keeps its own `argocd-redis`: the GitOps controller must not depend on an application it deploys.
+
+**Memory.** `maxmemory 512mb`, `maxmemory-policy volatile-lru`: only keys with a TTL are evicted (caches, sessions),
+never queue entries (Harbor jobservice, the practice executor). When memory is full of keys without a TTL, writes fail
+with OOM; `ValkeyMemoryHigh` fires at 85 %. Raise `maxMemory` and the 1Gi limit together.
+
+| From | Address |
+|---|---|
+| applications | `uri` from `redis-<name>-credentials` (`valkey-master`, the current primary) |
+| Sentinel-aware clients | `valkey-sentinel.redis.svc:26379`, master name `mk4` |
+| browser | https://jithendar.com/redis/ (RedisInsight, preconfigured as `console`): gateway login `redis` from Secret `redis/redis-ui-auth`, plus the IP allowlist |
+| redis-cli | `redis-cli --tls --sni redis.jithendar.com -h redis.jithendar.com -p 443 --user <name> --askpass` |
+
+Both public ways in are refused on the gateway unless the client address is in `redis_allowed_ips`
+(`vars/mk4.tfvars`); an empty list fails the plan. `redis.jithendar.com` needs a DNS record pointing at the host like
+`postgres.jithendar.com` (jithendar.com repository, `scripts/cloudflare-dns-record.sh`). Passwords:
+`$K -n redis get secret valkey-users -o jsonpath='{.data.<name>}' | base64 -d`; UI login:
+`$K -n redis get secret redis-ui-auth -o jsonpath='{.data.password}' | base64 -d`.
+
+**Health:** `$K -n redis exec valkey-0 -c valkey -- sh -c 'REDISCLI_AUTH=$VALKEY_PASSWORD valkey-cli -p 26379 sentinel master mk4'`
+(also `sentinel ckquorum mk4`; `info replication` on the primary shows `connected_slaves:2`). Alerts (Prometheus job
+`redis`): `ValkeyDown`, `ValkeyReplicaMissing`, `ValkeyMemoryHigh`, `ValkeyEvictingKeys`.
+
+**First install, in stages:** the edge chart refuses to plan until the gateway has a `redis` login line, which needs
+Secret `redis-ui-auth`:
+
+```bash
+export DOCKER_CONFIG=$(mktemp -d)   # only if ~/.docker/config.json names a credsStore that is not installed (OCI pull)
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars -target=helm_release.redis -target=kubernetes_secret_v1.redis_ui_auth -target=kubernetes_secret_v1.redis_app
+python3 scripts/istio/gateway-basic-auth.py --context mk4
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars   # edge route + TLS host, access chart, Prometheus job
+```
+
+**HAProxy post-renderer.** The chart's HAProxy closes connections idle for 30 s (idle Pub/Sub subscribers, blocking
+`BRPOP`). `deploy/minikube/redis/postrender-haproxy.sh` adds `timeout tunnel 1h` (Envoy's TCP idle timeout) and fails
+the apply if a chart upgrade removes the line it expects: check the new chart's HAProxy config, then adjust the script.
+
+### Moving an application (once each)
+
+1. Its namespace's NetworkPolicy must allow egress to namespace `redis` on 6379 (jithendar restricts egress), and an
+   Istio `Sidecar` egress list, if it has one (jithendar `75-mesh.yaml`), must include `redis/*`. The namespace must be
+   meshed: `redis` refuses plain text.
+2. Point the application at `redis-<name>-credentials` (its own repository: `uri`, or host/port/username/password/db).
+   Caches and sessions (jithendar, roboshop) need no copy; a cutover only logs users out.
+   Harbor's jobservice keeps queued and scheduled jobs in its Redis: copy old database 1 to new 3 first (scale
+   jobservice to 0, then `MIGRATE valkey-master.redis.svc.cluster.local 6379 "" 3 5000 COPY AUTH2 harbor <password>
+   KEYS ...` from `harbor-redis-0`, keys from `SCAN`), and map the databases 0→2, 1→3, 2→4, 5→5 in `harbor/values.yaml`.
+   The practice queue: drain it (no queued jobs) before switching.
+3. Start it, check it (`$K -n redis exec valkey-0 -c valkey -- sh -c 'REDISCLI_AUTH=$VALKEY_PASSWORD valkey-cli client
+   list' | grep user=<name>`), then remove the old Redis Deployment/StatefulSet, Service, NetworkPolicy and Secret.
+
+**Primary's node lost.** Sentinel promotes a replica within seconds; nothing to do. The lost pod stays Pending on its
+node (its volume is pinned there). If the node is gone for good: `$K -n redis delete pvc data-valkey-<n>` (then the PV,
+`Retain`) and delete the pod; it is rebuilt on another node and resyncs from the primary.
+
+**Not covered:** no off-cluster backup of the AOF/RDB yet; replicas protect against a node failure, not a deleted key.
 
 ## Wildcard certificate
 

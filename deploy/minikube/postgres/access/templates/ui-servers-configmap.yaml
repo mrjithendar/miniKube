@@ -1,0 +1,21 @@
+# pgAdmin's pre-registered server (PGADMIN_SERVER_JSON_FILE, loaded on its first start). No password is stored: pgAdmin
+# asks for it when the server is opened.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-ui-servers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: postgres-ui
+data:
+  servers.json: |
+    {{- dict "Servers" (dict "1" (dict
+          "Name" .Values.cluster
+          "Group" "mk4"
+          "Host" (printf "%s-rw" .Values.cluster)
+          "Port" 5432
+          "MaintenanceDB" "postgres"
+          "Username" "postgres"
+          "SSLMode" "prefer"
+          "ConnectionTimeout" 10
+        )) | toPrettyJson | nindent 4 }}

@@ -1,0 +1,18 @@
+# RedisInsight: only the public gateway (its allowlist and login run before any route).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: redis-ui
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels:
+      app: redis-ui
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces: [{{ .Values.gatewayNamespace | quote }}]
+      to:
+        - operation:
+            ports: ["5540"]

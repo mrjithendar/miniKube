@@ -1,0 +1,11 @@
+# STRICT for this namespace explicitly, not only through the mesh default (istio-system/default): every Valkey,
+# Sentinel and HAProxy port, pod to pod and client to pod, accepts mTLS only. Kubelet probes are exec or rewritten to
+# the sidecar's :15020 and are unaffected.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: {{ .Release.Namespace }}
+spec:
+  mtls:
+    mode: STRICT

@@ -39,12 +39,13 @@ def test_only_the_owning_namespace_binds_a_hostname():
     gateway = of(render(), 'Gateway', 'public')['spec']
     hosts = [h for s in gateway['servers'] for h in s['hosts']]
     assert all('/' in h and not h.startswith('*/') for h in hosts)
-    https, db, postgres, http = gateway['servers']
-    for tcp in (db, postgres):
+    https, db, postgres, redis, http = gateway['servers']
+    for tcp in (db, postgres, redis):
         assert tcp['tls']['credentialName'] == https['tls']['credentialName'] == VALUES['gateway']['certificate']['secretName']
         assert tcp['port']['protocol'] == 'TLS'
     assert db['hosts'] == ['jithendar/db.jithendar.com']
     assert postgres['hosts'] == ['postgres-db/postgres.jithendar.com']
+    assert redis['hosts'] == ['redis/redis.jithendar.com']
     assert http['tls'] == {'httpsRedirect': True}   # plain HTTP never reaches a login
 
 
@@ -77,7 +78,7 @@ def test_logins_run_on_https_only_and_skip_paths_outside_their_prefix():
 
 def test_read_only_rules_never_touch_the_tcp_hosts():
     rules = of(render(), 'AuthorizationPolicy', 'read-only')['spec']['rules']
-    assert rules and all(r['when'] == [{'key': 'connection.sni', 'notValues': ['db.jithendar.com', 'postgres.jithendar.com']}] for r in rules)
+    assert rules and all(r['when'] == [{'key': 'connection.sni', 'notValues': ['db.jithendar.com', 'postgres.jithendar.com', 'redis.jithendar.com']}] for r in rules)
     assert all(r['to'][0]['operation']['ports'] == ['443'] for r in rules)
 
 

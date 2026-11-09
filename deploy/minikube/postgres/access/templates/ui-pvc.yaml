@@ -1,0 +1,16 @@
+# pgAdmin's state (its SQLite: users, saved servers, preferences, query history). Kept when the release is removed.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-ui-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: postgres-ui
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.ui.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.ui.storageSize }}

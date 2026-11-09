@@ -8,7 +8,7 @@ locals {
   local_charts = [
     "cert-manager/issuers", "istio/edge", "istio/mesh", "observability/grafana/dashboards", "observability/jaeger",
     "observability/loki", "observability/otel-collector", "observability/prometheus", "postgres/access",
-    "storage/local-path-provisioner",
+    "redis/access", "storage/local-path-provisioner",
   ]
   chart_checksum = { for dir in local.local_charts : dir => yamlencode({
     chartChecksum = sha1(join("\n", [
@@ -53,6 +53,12 @@ variable "postgres_allowed_ips" {
   }
 }
 
+variable "postgres_ui_admin_email" {
+  description = "pgAdmin's login at https://jithendar.com/postgres/ (postgres.tf); its password is generated, Secret postgres-db/postgres-ui-admin."
+  type        = string
+  default     = "admin@jithendar.com"
+}
+
 variable "postgres_databases" {
   description = "Applications on the shared PostgreSQL cluster (postgres.tf): database and owning login role named by the key, connection Secret postgres-db-credentials written into namespace. Keys are PostgreSQL identifiers."
   type = map(object({
@@ -68,5 +74,37 @@ variable "postgres_databases" {
     # Names CloudNativePG itself uses: the bootstrap owner, the superuser, replication and PgBouncer roles.
     condition     = length(setintersection(keys(var.postgres_databases), ["app", "postgres", "streaming_replica", "cnpg_pooler_pgbouncer", "template0", "template1"])) == 0
     error_message = "app, postgres, streaming_replica, cnpg_pooler_pgbouncer, template0 and template1 are reserved."
+  }
+}
+
+variable "redis_tenants" {
+  description = "Applications on the shared Valkey (redis.tf): ACL user named by the key, limited to its database numbers, connection Secret redis-<key>-credentials written into namespace."
+  type = map(object({
+    namespace = string
+    # Database numbers (0-31) this application may SELECT; the first is the uri's default. No two tenants share one.
+    databases = list(number)
+  }))
+  default = {}
+  validation {
+    condition     = alltrue([for name in keys(var.redis_tenants) : can(regex("^[a-z][a-z0-9-]{0,40}$", name)) && !contains(["default", "console"], name)])
+    error_message = "Tenant names: lower case letters, digits and -, starting with a letter, at most 41 characters; \"default\" (admin) and \"console\" (RedisInsight) are reserved."
+  }
+  validation {
+    condition     = alltrue([for t in values(var.redis_tenants) : length(t.databases) > 0 && alltrue([for d in t.databases : d >= 0 && d <= 31 && floor(d) == d])])
+    error_message = "Each tenant needs at least one database number, each an integer from 0 to 31 (databases 32 in deploy/minikube/redis/values.yaml)."
+  }
+  validation {
+    condition     = length(flatten([for t in values(var.redis_tenants) : t.databases])) == length(distinct(flatten([for t in values(var.redis_tenants) : t.databases])))
+    error_message = "A database number belongs to one tenant only."
+  }
+}
+
+variable "redis_allowed_ips" {
+  description = "Client addresses (CIDRs) allowed through https://jithendar.com/redis/ and redis.jithendar.com:443 (redis.tf). Everything else is refused on the gateway."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for ip in var.redis_allowed_ips : can(cidrhost(ip, 0))])
+    error_message = "Each entry must be a CIDR, e.g. 203.0.113.7/32."
   }
 }

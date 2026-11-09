@@ -12,13 +12,13 @@ The Istio ingress gateway (`ingressgateway.yaml`, release `istio-ingressgateway`
 | Logins (basic auth) for /prometheus, /loki, /opensearch, /opensearch-dashboards, by path prefix | `edge/templates/basic-auth.yaml`, `basicAuth`; users from Secret `gateway-basic-auth` |
 | /opensearch read-only (GET, HEAD, POST to `_search`/`_msearch`/`_count`) | `edge/templates/read-only.yaml` |
 | Visitor address: PROXY protocol first on 80/443; X-Forwarded-For and X-Real-IP replaced by it | `edge/templates/proxy-protocol.yaml`, `forwarded-for.yaml` |
-| ALPN `postgresql` for db.jithendar.com, compression | `edge/templates/tls-alpn.yaml`, `compression.yaml` |
+| ALPN `postgresql` for postgres.jithendar.com, compression | `edge/templates/tls-alpn.yaml`, `compression.yaml` |
 | Delegates for Kiali and Grafana (their charts only render Ingresses) | `edge/templates/route-*.yaml` |
 
 Each application owns a delegate VirtualService for its prefix (no hosts, no gateways): moks (`/moks`, `/opensearch`,
-`/opensearch-dashboards`), roboshop-ai (`/roboshop`), jithendar.com (the site, `/db`), Prometheus, Loki, Argo CD and
+`/opensearch-dashboards`), roboshop-ai (`/roboshop`), jithendar.com (the site), Prometheus, Loki, Argo CD and
 Vault here. Its own hostname gets its own VirtualService on `istio-ingress/public`: Harbor (registry.), JFrog (jfrog.),
-jithendar.com (db., TCP). One root avoids Istio's merge order for VirtualServices of one host: whichever was created first
+PostgreSQL (postgres., TCP), Redis (redis., TCP). One root avoids Istio's merge order for VirtualServices of one host: whichever was created first
 would win, and the site's `/` would shadow every later prefix.
 
 A new public prefix: add it to `edge/values.yaml` `root.delegates` (longer prefixes first) and give the application a

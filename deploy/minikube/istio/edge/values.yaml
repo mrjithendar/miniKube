@@ -26,14 +26,12 @@ gateway:
     - istio-ingress/www.jithendar.com
     - harbor/registry.jithendar.com
     - jfrog/jfrog.jithendar.com
-  # TLS terminated here, then plain TCP (VirtualService tcp routes): PostgreSQL at db.jithendar.com:443 (the site's
-  # database) and postgres.jithendar.com:443 (the CloudNativePG cluster, deploy/minikube/postgres/access); Redis at
+  # TLS terminated here, then plain TCP (VirtualService tcp routes): PostgreSQL at postgres.jithendar.com:443 (the
+  # CloudNativePG cluster, deploy/minikube/postgres/access); Redis at
   # redis.jithendar.com:443 (the shared Valkey, deploy/minikube/redis/access; redis-cli --tls --sni, no ALPN).
   tls:
-    - host: jithendar/db.jithendar.com
-      # libpq 17+ with sslnegotiation=direct requires the server to select ALPN "postgresql".
-      alpn: [postgresql]
     - host: postgres-db/postgres.jithendar.com
+      # libpq 17+ with sslnegotiation=direct requires the server to select ALPN "postgresql".
       alpn: [postgresql]
     - host: redis/redis.jithendar.com
 
@@ -59,7 +57,6 @@ root:
     - {name: opensearch-dashboards, prefix: /opensearch-dashboards, to: moks/moks-opensearch-dashboards}
     - {name: opensearch, prefix: /opensearch, to: moks/moks-opensearch}
     - {name: roboshop, prefix: /roboshop, to: roboshop-ai/roboshop}
-    - {name: db, prefix: /db, to: jithendar/jithendar-db-ui}
     - {name: postgres, prefix: /postgres, to: postgres-db/postgres-ui}
     - {name: redis, prefix: /redis, to: redis/redis-ui}
     - {name: vault-ui, prefix: /ui, to: vault/vault}

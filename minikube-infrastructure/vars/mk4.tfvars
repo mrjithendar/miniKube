@@ -23,7 +23,6 @@ postgres_databases = {
 # <namespace>/redis-<key>-credentials, which the application reads (no application runs its own Redis any more).
 # Argo CD keeps its own Redis (README.md, Redis).
 redis_tenants = {
-  jithendar = { namespace = "jithendar", databases = [0] }       # site cache, sessions, rate limits (REDIS_URL)
   practice  = { namespace = "jithendar", databases = [1] }       # practice executor queue (EXECUTOR_REDIS_URL)
   harbor    = { namespace = "harbor", databases = [2, 3, 4, 5] } # core, jobservice, registry, trivy
   roboshop  = { namespace = "roboshop-ai", databases = [6] }     # cart and shipping cache

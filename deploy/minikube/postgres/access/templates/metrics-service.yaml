@@ -1,4 +1,5 @@
-# Every instance's exporter (:9187), found by Prometheus through DNS (job "postgres" in the Prometheus chart).
+# Every instance's exporter (:9187) behind one name, for ad-hoc checks (curl from a pod in monitoring). Prometheus finds the
+# instances itself through the Kubernetes API (job "postgres" in the Prometheus chart), so series carry pod names.
 apiVersion: v1
 kind: Service
 metadata:
@@ -8,6 +9,8 @@ spec:
   clusterIP: None
   selector:
     cnpg.io/cluster: {{ .Values.cluster }}
+    # Not the PgBouncer pods (cnpg.io/podRole=pooler): they have no exporter on 9187.
+    cnpg.io/podRole: instance
   ports:
     - name: metrics
       port: 9187

@@ -15,6 +15,19 @@ spec:
       redirect:
         uri: {{ printf "%s/" .Values.ui.prefix }}
         redirectCode: 302
+    # With RI_PROXY_PATH set, the frontend opens its socket at {{ .Values.ui.prefix }}/socket.io, but the backend serves
+    # socket.io at the root only; unrewritten, the request falls through to the SPA and gets index.html back.
+    - name: redis-ui-socket
+      match:
+        - uri:
+            prefix: {{ printf "%s/socket.io" .Values.ui.prefix }}
+      rewrite:
+        uri: /socket.io
+      route:
+        - destination:
+            host: {{ printf "redis-ui.%s.svc.cluster.local" .Release.Namespace }}
+            port:
+              number: 80
     - name: redis-ui
       match:
         - uri:

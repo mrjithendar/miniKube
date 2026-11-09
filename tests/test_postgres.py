@@ -106,3 +106,35 @@ def test_ui_is_pgadmin_under_the_prefix_with_its_state_kept():
     assert route['headers']['response']['set']['Referrer-Policy'] == 'same-origin'
     dr = of(docs, 'DestinationRule', 'postgres-ui')['spec']
     assert dr['trafficPolicy']['connectionPool']['http']['idleTimeout'] == '1s'
+
+
+PROMETHEUS = yaml.safe_load((ROOT / 'deploy/minikube/observability/prometheus/values.yaml').read_text())
+DASHBOARDS = ROOT / 'deploy/minikube/observability/grafana/dashboards'
+
+
+def test_prometheus_scrapes_instances_not_poolers_with_pod_names():
+    job = next(j for j in PROMETHEUS['extraScrapeConfigs'] if j['job_name'] == 'postgres')
+    assert job['kubernetes_sd_configs'] == [{'role': 'pod', 'namespaces': {'names': ['postgres-db']}}]
+    keep = job['relabel_configs'][0]
+    assert keep['action'] == 'keep' and keep['regex'] == 'postgres-cluster;instance;metrics'
+    assert {'source_labels': ['__meta_kubernetes_pod_name'], 'target_label': 'pod'} in job['relabel_configs']
+    svc = of(allowed(), 'Service', 'postgres-cluster-metrics')['spec']
+    assert svc['selector'] == {'cnpg.io/cluster': 'postgres-cluster', 'cnpg.io/podRole': 'instance'}
+
+
+@pytest.mark.parametrize('name,job', [('platform-postgres.json', 'postgres'), ('platform-redis.json', 'redis')])
+def test_platform_dashboards_query_their_job_on_the_provisioned_datasource(name, job):
+    import json
+    board = json.loads((DASHBOARDS / name).read_text())
+    assert board['uid'] == name[:-5] and 'platform' in board['tags']
+    targets = [t for p in board['panels'] for t in p.get('targets', [])]
+    assert targets and all(t['datasource'] == {'type': 'prometheus', 'uid': 'roboshop-prometheus'} for t in targets)
+    assert all(f'job="{job}"' in t['expr'] or 'container_' in t['expr'] for t in targets)
+    ids = [p['id'] for p in board['panels']]
+    assert len(ids) == len(set(ids))
+    grafana = yaml.safe_load((ROOT / 'deploy/minikube/observability/grafana/values.yaml').read_text())
+    assert grafana['dashboardsConfigMaps']['platform'] == 'grafana-dashboards-platform'
+    providers = grafana['dashboardProviders']['dashboardproviders.yaml']['providers']
+    assert {'folder': 'Platform', 'path': '/var/lib/grafana/dashboards/platform'} == {
+        'folder': next(p for p in providers if p['name'] == 'platform')['folder'],
+        'path': next(p for p in providers if p['name'] == 'platform')['options']['path']}

@@ -119,8 +119,13 @@ def test_tcp_route_and_console_go_to_the_master_proxy():
 def test_metrics_service_declares_its_port_for_mtls():
     svc = of(allowed(), 'Service', 'valkey-metrics-pods')['spec']
     assert svc['clusterIP'] == 'None' and svc['ports'][0]['port'] == 9121
+    # Prometheus finds the pods through the API (pod names on every series) but still scrapes pod IP:9121, which the
+    # Service above makes a mesh destination (mTLS).
     job = next(j for j in PROMETHEUS['extraScrapeConfigs'] if j['job_name'] == 'redis')
-    assert job['dns_sd_configs'][0] == {'names': ['valkey-metrics-pods.redis.svc.cluster.local'], 'type': 'A', 'port': 9121}
+    assert job['kubernetes_sd_configs'] == [{'role': 'pod', 'namespaces': {'names': ['redis']}}]
+    keep = job['relabel_configs'][0]
+    assert keep['action'] == 'keep' and keep['regex'] == 'valkey;9121'
+    assert {'source_labels': ['__meta_kubernetes_pod_name'], 'target_label': 'pod'} in job['relabel_configs']
 
 
 def test_edge_routes_redis_behind_a_login_and_terminates_its_host():

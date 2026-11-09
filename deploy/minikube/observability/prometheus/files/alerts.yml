@@ -185,7 +185,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: 'Valkey pod {{ $labels.instance }} is down; on valkey-0 (primary) every application loses Redis'
+          summary: 'Valkey pod {{ $labels.pod }} ({{ $labels.instance }}) is down; if it was the primary, writes fail until a replica takes over'
           runbook_url: 'https://github.com/mrjithendar/miniKube/blob/master/minikube-infrastructure/README.md#redis-valkey'
       - alert: ValkeyReplicaMissing
         expr: max(redis_connected_slaves{job="redis"}) < 2

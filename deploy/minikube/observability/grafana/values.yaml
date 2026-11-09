@@ -117,8 +117,8 @@ datasources:
             customQuery: true
             query: '{namespace=~"jithendar|moks"} |= "trace_id=$${__trace.traceId}"'
 
-# The ConfigMaps come from the grafana-dashboards release (minikube-infrastructure/grafana.tf): RoboShop and MOKS
-# from ./dashboards, Jithendar.com from the jithendar.com checkout's grafana/ folder.
+# The ConfigMaps come from the grafana-dashboards release (minikube-infrastructure/grafana.tf): RoboShop, MOKS and
+# Platform (the shared PostgreSQL and Redis clusters) from ./dashboards, Jithendar.com from the jithendar.com checkout's grafana/ folder.
 dashboardProviders:
   dashboardproviders.yaml:
     apiVersion: 1
@@ -153,10 +153,21 @@ dashboardProviders:
         updateIntervalSeconds: 30
         options:
           path: /var/lib/grafana/dashboards/moks
+      - name: platform
+        orgId: 1
+        folder: Platform
+        type: file
+        disableDeletion: true
+        editable: false
+        allowUiUpdates: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/platform
 dashboardsConfigMaps:
   roboshop: grafana-dashboards-roboshop
   jithendar: grafana-dashboards-jithendar
   moks: grafana-dashboards-moks
+  platform: grafana-dashboards-platform
 
 # Minikube hostPath data lives on this node; move only together with the data.
 nodeSelector:

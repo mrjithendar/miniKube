@@ -44,29 +44,46 @@ extraScrapeConfigs:
     relabel_configs:
       - target_label: service
         replacement: moks
-  # CloudNativePG cluster (namespace postgres-db): every instance's exporter through the headless Service
-  # postgres-cluster-metrics (deploy/minikube/postgres/access). cnpg_pg_replication_lag and cnpg_collector_up are the
-  # ones to watch. The access chart's NetworkPolicy admits monitoring on 9187.
+  # CloudNativePG cluster (namespace postgres-db): every instance's exporter (container port "metrics", :9187), found
+  # through the Kubernetes API (pod list/watch, kubernetesMetrics) so each series carries its pod name; PgBouncer pods
+  # (cnpg.io/podRole=pooler) have no exporter on that port. cnpg_pg_replication_lag and cnpg_collector_up are the ones
+  # to watch. The access chart's NetworkPolicy admits monitoring on 9187. Dashboard: Platform / PostgreSQL cluster.
   - job_name: postgres
     metrics_path: /metrics
-    dns_sd_configs:
-      - names: ["postgres-cluster-metrics.postgres-db.svc.cluster.local"]
-        type: A
-        port: 9187
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [postgres-db]
     relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster, __meta_kubernetes_pod_label_cnpg_io_podRole, __meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: postgres-cluster;instance;metrics
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
       - target_label: service
         replacement: postgres-cluster
-  # Shared Valkey (namespace redis, deploy/minikube/redis): every pod's redis_exporter through the headless Service
-  # valkey-metrics-pods (redis/access), which declares :9121 so the scrape goes out as mTLS (namespace redis is STRICT).
-  # redis_connected_slaves, redis_memory_used_bytes and redis_evicted_keys_total are the ones to watch. The access
-  # chart's AuthorizationPolicy and NetworkPolicy admit monitoring on 9121.
+  # Shared Valkey (namespace redis, deploy/minikube/redis): every pod's redis_exporter (container port 9121), found
+  # through the Kubernetes API so each series carries its pod name. The headless Service
+  # valkey-metrics-pods (redis/access) must keep declaring :9121: it is what makes the scrape go out as mTLS (namespace
+  # redis is STRICT). redis_connected_slaves, redis_memory_used_bytes and redis_evicted_keys_total are the ones to
+  # watch. The access chart's AuthorizationPolicy and NetworkPolicy admit monitoring on 9121.
+  # Dashboard: Platform / Redis (Valkey).
   - job_name: redis
     metrics_path: /metrics
-    dns_sd_configs:
-      - names: ["valkey-metrics-pods.redis.svc.cluster.local"]
-        type: A
-        port: 9121
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [redis]
     relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_container_port_number]
+        action: keep
+        regex: valkey;9121
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
       - target_label: service
         replacement: valkey
   - job_name: loki

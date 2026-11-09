@@ -33,47 +33,31 @@ missing source Secret gives a locked line (today: `monitoring/loki-read-auth`), 
 the Secret, so a path never opens by accident. The hashes are in the Terraform state and the EnvoyFilter; the
 passwords are not.
 
-## Leaving Traefik (once, in this order)
+## Mesh security (`mesh/`, release `istio-mesh`)
 
-`K="kubectl --context mk4"`. Each step keeps every route working; check before the next.
+| What | Where |
+|---|---|
+| STRICT mTLS for every namespace without its own PeerAuthentication (`istio-system/default`); jithendar, moks and roboshop-ai keep a STRICT one of their own, none has a plain-text port | `mesh/templates/peerauthentication.yaml` |
+| `allow-known-callers` in argocd, cert-manager, harbor, monitoring, observability: only the namespace itself and the listed namespaces' identities | `mesh/values.yaml` `authorization`; the applications keep theirs in their repositories |
+| The gateway's access log, JSON with Alloy's allowed fields only (no address, path or header) | `mesh/templates/telemetry.yaml`, provider `edge-access-log` in `istiod.yaml` |
+| Two gateway replicas with a PDB, two istiod replicas (chart PDB), Kiali meshed by pod label | `ingressgateway.yaml`, `istiod.yaml`, `kiali.yaml` |
 
-1. **Logins:** `python3 scripts/istio/gateway-basic-auth.py` (`--dry-run` first).
-2. **Applications first.** Their delegates change nothing until the root exists, and their NetworkPolicies still
-   admit Traefik:
-   - jithendar.com: `$K apply -k minikube`, `scripts/manifests.sh db-access | $K apply -f -`;
-   - moks: push, sync `moks-routing` and `moks-foundation`;
-   - roboshop-ai: merge `argocd-minikube/apps/routing` to master, sync `roboshop-routing`;
-   - this repo: push, sync `harbor`, `$K apply -k deploy/minikube/argocd`.
-3. **Edge:** `terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars` (`traefik_enabled = true`).
-   Gateway `public`, the routing table and logins go live, and the Kiali, Grafana, Prometheus and Loki Ingresses go
-   away. Traefik's hand-off (priority 1) sends whatever it no longer routes to the gateway. Check the gateway took the
-   config: `$K -n istio-system logs deploy/istiod --since=5m | grep -i -E 'nack|rejected'` must be empty. Before going
-   on, test through the gateway itself:
-   `$K -n istio-ingress port-forward svc/istio-ingressgateway 18443:443`, then
-   `curl --resolve jithendar.com:18443:127.0.0.1 https://jithendar.com:18443/<path>` for `/`, `/argocd/`,
-   `/grafana/api/health`, `/kiali/`, `/prometheus/-/ready` (401 with `WWW-Authenticate`, 200 with `-u`), `/moks/`,
-   `/roboshop/` and `/opensearch` (401). `-X PUT` with the login gives 403. Registry `/v2/` gives Harbor's own 401.
-4. **Traefik's own routes:** delete them, and the hand-off sends their traffic to the gateway too:
-   - `$K -n argocd delete ingress argocd argocd-http; $K -n argocd delete middleware argocd-https`;
-   - `$K -n harbor delete ingress harbor-ingress harbor-http harbor-shortcut; $K -n harbor delete middleware harbor-https harbor-shortcut`;
-   - `$K -n moks delete ingress moks moks-http; $K -n moks delete ingressroute opensearch opensearch-dashboards; $K -n moks delete middleware https-redirect opensearch-auth opensearch-strip-prefix opensearch-dashboards-auth`;
-   - `$K -n roboshop-ai delete ingress roboshop roboshop-http; $K -n roboshop-ai delete middleware https-redirect roboshop-strip-prefix`.
+Every client of a meshed pod is meshed: kubelet probes go to the sidecar's :15020, Prometheus scrapes through its own
+sidecar (no `includeOutboundIPRanges: ""`: that made scrapes plain text), Kiali has a sidecar. Before adding a client
+outside the mesh, check plain text is gone:
+`sum by (destination_workload_namespace,destination_workload) (increase(istio_requests_total{reporter="destination",connection_security_policy="none"}[1h]))`
+must be empty. The unmeshed namespaces moks-terminals, moks-diagnostics and moks-lab cannot call meshed Services.
 
-   Until step 5 the applications see Traefik's pod address instead of the visitor's: /db and db.jithendar.com refuse
-   everyone, and per-IP rate limits share one bucket. Keep this short.
-5. **Host:** push this repository, then on the Hetzner host
-   `cd miniKube && git pull --ff-only && bash deploy/minikube/expose-ingress.sh`. HAProxy now sends 80/443 to the gateway.
-   Check that `/`, `/db/` from an allowed address, `psql "host=db.jithendar.com port=443 … sslnegotiation=direct"`, and
-   `docker push registry.jithendar.com/…` all work, and that the site logs your real address. A spoofed
-   `X-Forwarded-For` must not change it.
-   *Way back:* `git checkout` the previous `expose-ingress.sh` and rerun it. Traefik is still installed.
-6. **Uninstall Traefik:** set `traefik_enabled = false` in `minikube-infrastructure/vars/mk4.tfvars` and `terraform apply`.
-   That removes the Helm release and the hand-off routes, and the gateway now requires the PROXY header. Then delete
-   what Helm leaves behind: `$K delete ns traefik` and `$K get crd -o name | grep traefik.io | xargs $K delete`
-   (after the jithendar.com objects in its README, "Leaving Traefik").
-7. **Cleanup changes:**
-   - moks `mesh.edgeMtls: true`, `networkPolicy.ingressNamespaces: [istio-ingress]`, and the traefik kinds and
-     destination removed from `deploy/argocd/minikube/project.yaml`;
-   - jithendar.com: its README's "Leaving Traefik" (STRICT);
-   - here: delete `deploy/minikube/traefik/`, `namespaces/traefik.yaml`, `traefik.tf` with `traefik_enabled` and
-     `adopt_existing_traefik`, the `traefik-handoff-*` templates and `tests/test_harbor.py::test_traefik_reads_large_layers`.
+**AuthorizationPolicies start as dry runs** (`istio.io/dry-run: "true"`): nothing is refused, Envoy counts what would
+be. `python3 scripts/istio/authz-dry-run-report.py` prints the non-zero counts (exit 1). After a day at 0, enforce:
+`authorization.dryRun: false` here, `mesh.authorization.dryRun: false` in moks, and delete the annotation in
+jithendar.com `minikube/75-mesh.yaml` and roboshop-ai `argocd-minikube/apps/mesh/authorizationpolicy.yaml`. A new
+caller across namespaces needs its namespace added to the callee's list first.
+
+## Traefik (gone, 2026-11-09)
+
+The host's HAProxy forwards to the gateway, the gateway requires the PROXY header, and Traefik's release, namespace and
+routes are deleted. Left on mk4 until the next `terraform apply` of `prometheus` and `loki`: their old Traefik
+Middlewares (Helm deletes them on upgrade). **Only after that apply**, delete the CRDs:
+`kubectl --context mk4 get crd -o name | grep traefik.io | xargs kubectl --context mk4 delete`. Deleting them first
+breaks the upgrade: Helm cannot build the previous release's Middleware objects without their CRD.

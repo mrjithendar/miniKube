@@ -20,7 +20,7 @@ mtls:
 # One ALLOW AuthorizationPolicy per namespace below: only workloads from the listed namespaces (their mTLS identity)
 # may call anything there. A namespace's own pods are always allowed. istio-ingress is the public gateway; monitoring
 # is Prometheus (scrapes) and Grafana. Application namespaces keep theirs in their own repositories.
-# dryRun true: Envoy only counts what it would have refused (stats *.rbac.istio_dry_run_allow_shadow_denied) and lets
+# dryRun true: Envoy only counts what it would have refused (stats *.rbac.istio_dry_run_allow_.shadow_denied) and lets
 # everything through. Read the counts with scripts/istio/authz-dry-run-report.sh; set false once they stay at 0.
 # Never istio-system: a policy there without a selector applies to the whole mesh.
 authorization:

@@ -4,7 +4,7 @@
   python3 scripts/istio/authz-dry-run-report.py [--context mk4] [namespace ...]
 
 An AuthorizationPolicy annotated istio.io/dry-run: "true" lets every request through and only counts, in its pod's
-sidecar, what it would have denied (Envoy stats ending in rbac.istio_dry_run_allow_shadow_denied, HTTP and TCP). This
+sidecar, what it would have denied (Envoy stats *.rbac.istio_dry_run_allow_.shadow_denied, HTTP and TCP). This
 reads those counters from every meshed pod in the namespaces that have such a policy (or the ones given). Counters
 start at 0 when a pod starts, so run it after a day of normal traffic. All zero: set dryRun false (miniKube
 deploy/minikube/istio/mesh/values.yaml, and the applications' own switches). A non-zero count names the pod that was
@@ -38,7 +38,8 @@ def shadow_denied(context, namespace, pod):
     counts = {}
     for line in stats.stdout.splitlines():
         name, _, value = line.rpartition(': ')
-        if name.endswith('istio_dry_run_allow_shadow_denied') and value.strip().isdigit() and int(value):
+        # e.g. http.inbound_0.0.0.0_3000;.rbac.istio_dry_run_allow_.shadow_denied (tcp.… for TCP ports)
+        if 'istio_dry_run_allow_' in name and name.endswith('shadow_denied') and value.strip().isdigit() and int(value):
             counts[name] = int(value)
     return counts
 

@@ -9,7 +9,7 @@ Argo CD Application, opt-in: `deploy.py all` never selects it.
 | Portal | https://registry.jithendar.com/harbor/ (https://jithendar.com/harbor redirects there) |
 | Registry | `registry.jithendar.com/<project>/<image>:<tag>` |
 | Argo CD | Application `harbor`, AppProject `mk-registry`, namespace `harbor` ([`../applications/optional/`](../applications/optional/)) |
-| Files | [`values.yaml`](values.yaml) (chart), [`manifests/`](manifests/) (database, Redis, TLS, routes, backup), [`credentials.py`](credentials.py), [`deploy-harbor.sh`](deploy-harbor.sh) (build, push, deploy), [`examples/`](examples/) |
+| Files | [`values.yaml`](values.yaml) (chart), [`manifests/`](manifests/) (database, TLS, routes, backup), [`credentials.py`](credentials.py), [`deploy-harbor.sh`](deploy-harbor.sh) (build, push, deploy), [`examples/`](examples/) |
 
 Status on 2026-11-06: nothing is deployed. DNS, images and secrets below are prerequisites.
 
@@ -33,8 +33,8 @@ and `expose.ingress.hosts.core` in `values.yaml` and the hostnames in `manifests
 | Decision | Why |
 |---|---|
 | Harbor images built from source for arm64 and kept in the private Docker Hub repository `jithendar/custom-harbour` | goharbor publishes amd64 only (v2.15.4 on Docker Hub and GHCR); every mk4 node is arm64. One tag per component, `<component>-v2.15.4`. Docker Hub is reachable when Harbor is not, so Harbor never needs itself to start. |
-| PostgreSQL 18 and Valkey 8 as StatefulSets beside the chart, not the chart's internal ones | Argo CD renders without cluster access. The chart's internal database takes its password only from values (default `changeit`), and its internal Redis has no password, yet Harbor keeps portal sessions in Redis. mk4 runs arbitrary code (MOKS terminals, the practice executor) and kindnet's NetworkPolicy enforcement is unproven, so both need real credentials. |
-| Every credential in `harbor/harbor-credentials`, created by `./create-secrets.sh` | Anything the chart generates (`randAlphaNum`, `genCA`) would change on every Argo CD sync. The Redis password is spliced into each component's Redis URL at runtime (`$(REDIS_PASSWORD)`), because the chart's `existingSecret` for Redis needs Helm `lookup`. |
+| PostgreSQL 18 as a StatefulSet beside the chart; Redis on mk4's shared Valkey (`redis` namespace, tenant `harbor`, databases 2–5), not the chart's internal ones | Argo CD renders without cluster access. The chart's internal database takes its password only from values (default `changeit`), and its internal Redis has no password, yet Harbor keeps portal sessions in Redis. mk4 runs arbitrary code (MOKS terminals, the practice executor) and kindnet's NetworkPolicy enforcement is unproven, so both need real credentials. The Valkey user `harbor` can open only its own databases; Terraform writes its password into `harbor/redis-harbor-credentials` (`minikube-infrastructure/README.md`, "Redis (Valkey)"). |
+| Every chart credential in `harbor/harbor-credentials`, created by `./create-secrets.sh` | Anything the chart generates (`randAlphaNum`, `genCA`) would change on every Argo CD sync. The Redis password (from `redis-harbor-credentials`) is spliced into each component's Redis URL at runtime (`$(REDIS_PASSWORD)`), because the chart's `existingSecret` for Redis needs Helm `lookup`. |
 | Token-signing key from cert-manager (self-signed, 10 years, never rotated) | Same reason; cert-manager already owns TLS keys here. |
 | Everything on `mk4-m05` | Volumes are minikube hostPath, which exist only on one node. m02–m04 already hold the other databases. |
 | Istio gateway straight to core and portal (`manifests/harbor-virtualservice.yaml`), `expose.type: clusterIP`, no Harbor nginx | The gateway is mk4's edge (`../istio/README.md`). The chart has no "no ingress" mode; clusterIP renders no Ingress, and its nginx stays at 0 replicas (no arm64 build). |
@@ -66,8 +66,7 @@ Client → Cloudflare DNS (**DNS only**) → host HAProxy (TCP, PROXY protocol, 
 | portal | 10m / 200m | 32Mi / 128Mi | |
 | registry + registryctl | 110m / 1.5 | 160Mi / 1.25Gi | `harbor-registry` 30Gi |
 | PostgreSQL 18 | 100m / 1 | 256Mi / 1Gi | `harbor-postgres-data` 5Gi |
-| Valkey 8 | 25m / 250m | 64Mi / 256Mi | `harbor-redis-data` 1Gi |
-| **Total** | **395m / 4.45** | **896Mi / 3.6Gi** | **36Gi nominal** |
+| **Total** | **370m / 4.2** | **832Mi / 3.35Gi** | **35Gi nominal** |
 | Trivy, if enabled | 200m / 1 | 512Mi / 1Gi | 5Gi |
 | Backup job, daily while it runs | 100m / 1 | 128Mi / 512Mi | |
 
@@ -334,8 +333,8 @@ kubectl --context mk4 -n harbor get secret harbor-credentials -o json |
 
 ### Restore, including after Minikube is rebuilt
 
-Harbor's own images come from `jithendar/custom-harbour` and the database and Redis images from public Docker Hub,
-so none of this needs Harbor.
+Harbor's own images come from `jithendar/custom-harbour` and the database image from public Docker Hub; Redis is the
+shared Valkey (Terraform), so none of this needs Harbor.
 
 1. Rebuild the cluster as usual: `./deploy-minikube.sh`, `terraform -chdir=minikube-infrastructure apply` (Traefik with
    its timeout, cert-manager and the add-ons), then `./bootstrap-cluster.sh --context mk4` (Argo CD, ECR pull secrets).
@@ -383,5 +382,5 @@ after a final backup. Reverting the Traefik timeout is a values change and a Tra
   components it builds pins amd64, but no arm64 build of v2.15.4 has been seen to succeed.
 - Push and pull through Traefik with the 900s timeout, node-runtime pulls, retention, GC, backup and restore all
   depend on a running Harbor.
-- Harbor's support for this exact external PostgreSQL 18 / Valkey 8 combination is inferred: its bundled database
+- Harbor's support for this exact external PostgreSQL 18 / Valkey 9 (shared, ACL user) combination is inferred: its bundled database
   for v2.15 is PostgreSQL 18 and its bundled Redis is Valkey.

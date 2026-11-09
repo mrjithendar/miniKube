@@ -145,13 +145,14 @@ Reserved users: `default` (admin: replication, Sentinel, HAProxy checks, exporte
 database, no admin command, no flush). Pub/Sub channels are shared by every user (`&*`): channel names are not
 isolated, keys are. Adding or changing a tenant rolls the StatefulSet (primary handed over first).
 
-| Tenant (`redis_tenants`) | Namespace | Databases | Replaces |
-|---|---|---|---|
-| `jithendar` | `jithendar` | 0 | `jithendar-redis` (site cache, sessions, rate limits) |
-| `practice` | `jithendar` | 1 | `practice-redis` (practice executor queue) |
-| `harbor` | `harbor` | 2, 3, 4, 5 | `harbor-redis` databases 0 (core), 1 (jobservice), 2 (registry), 5 (trivy) |
-| `roboshop` | `roboshop-ai` | 6 | `roboshop-ai/redis` (cart, shipping cache) |
+| Tenant (`redis_tenants`) | Namespace | Databases | Used by (reads `redis-<name>-credentials`) | Replaced |
+|---|---|---|---|---|
+| `jithendar` | `jithendar` | 0 | site cache, sessions, rate limits: `REDIS_URL` = `uri` (jithendar.com `minikube/30-jithendar-com.yaml`) | `jithendar-redis` |
+| `practice` | `jithendar` | 1 | practice executor queue: `EXECUTOR_REDIS_URL` = `uri` (jithendar.com `minikube/practice-executor-40-executor.yaml`) | `practice-redis` |
+| `harbor` | `harbor` | 2 core, 3 jobservice, 4 registry, 5 trivy | `password` (miniKube `deploy/minikube/harbor/values.yaml`) | `harbor-redis` databases 0, 1, 2, 5 |
+| `roboshop` | `roboshop-ai` | 6 | cart-service, shipping-service: host/port/username/password/db (roboshop-ai `argocd-minikube`) | `roboshop-ai/redis` |
 
+No application on mk4 runs a Redis of its own any more.
 Argo CD keeps its own `argocd-redis`: the GitOps controller must not depend on an application it deploys.
 
 **Memory.** `maxmemory 512mb`, `maxmemory-policy volatile-lru`: only keys with a TTL are evicted (caches, sessions),
@@ -191,7 +192,8 @@ the apply if a chart upgrade removes the line it expects: check the new chart's 
 
 ### Moving an application (once each)
 
-1. Its namespace's NetworkPolicy must allow egress to namespace `redis` on 6379 (jithendar restricts egress), and an
+1. Its namespace's NetworkPolicy must allow egress to namespace `redis` on 6379 and 6380 (`valkey-master:6379` is the
+   HAProxy master proxy on pod port 6380; jithendar restricts egress), and an
    Istio `Sidecar` egress list, if it has one (jithendar `75-mesh.yaml`), must include `redis/*`. The namespace must be
    meshed: `redis` refuses plain text.
 2. Point the application at `redis-<name>-credentials` (its own repository: `uri`, or host/port/username/password/db).

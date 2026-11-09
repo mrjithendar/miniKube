@@ -71,9 +71,10 @@ ipFamily:
   ipv6:
     enabled: false
 
-# Database and Redis run beside the chart (manifests/harbor-postgres-*, manifests/harbor-redis-*). The chart's
-# internal database takes its password only from values, and its internal Redis has no password; neither can be
-# kept out of Git, and NetworkPolicy enforcement on mk4's kindnet is unproven.
+# The database runs beside the chart (manifests/harbor-postgres-*); Redis is mk4's shared Valkey in namespace redis
+# (minikube-infrastructure/redis.tf, tenant "harbor": ACL user harbor, databases 2-5, Secret redis-harbor-credentials
+# written into this namespace by Terraform). The chart's internal database takes its password only from values, and
+# its internal Redis has no password; neither can be kept out of Git.
 database:
   type: external
   external:
@@ -90,14 +91,17 @@ database:
 redis:
   type: external
   external:
-    addr: harbor-redis:6379
-    coreDatabaseIndex: '0'
-    jobserviceDatabaseIndex: '1'
-    registryDatabaseIndex: '2'
+    # The current primary, through the HAProxy in every Valkey pod: one address across Sentinel failovers.
+    addr: valkey-master.redis.svc.cluster.local:6379
+    # ACL user "harbor" may SELECT only databases 2, 3, 4 and 5 (vars/mk4.tfvars redis_tenants).
+    username: harbor
+    coreDatabaseIndex: '2'
+    jobserviceDatabaseIndex: '3'
+    registryDatabaseIndex: '4'
     trivyAdapterIndex: '5'
     # Not existingSecret: the chart reads that with Helm lookup, which returns nothing under Argo CD and leaves
-    # the password out of every URL. Each component instead gets REDIS_PASSWORD from harbor-credentials and the
-    # URLs below are rebuilt with it ($(VAR) expansion; env takes precedence over the chart's envFrom ConfigMaps).
+    # the password out of every URL. Each component instead gets REDIS_PASSWORD from redis-harbor-credentials and
+    # the URLs below are rebuilt with it ($(VAR) expansion; env takes precedence over the chart's envFrom ConfigMaps).
     password: ''
 
 portal:
@@ -130,11 +134,11 @@ core:
   extraEnvVars:
   - name: REDIS_PASSWORD
     valueFrom:
-      secretKeyRef: {name: harbor-credentials, key: REDIS_PASSWORD}
+      secretKeyRef: {name: redis-harbor-credentials, key: password}
   - name: _REDIS_URL_CORE
-    value: redis://:$(REDIS_PASSWORD)@harbor-redis:6379/0?idle_timeout_seconds=30
+    value: redis://harbor:$(REDIS_PASSWORD)@valkey-master.redis.svc.cluster.local:6379/2?idle_timeout_seconds=30
   - name: _REDIS_URL_REG
-    value: redis://:$(REDIS_PASSWORD)@harbor-redis:6379/2?idle_timeout_seconds=30
+    value: redis://harbor:$(REDIS_PASSWORD)@valkey-master.redis.svc.cluster.local:6379/4?idle_timeout_seconds=30
 
 jobservice:
   image:
@@ -156,12 +160,12 @@ jobservice:
   extraEnvVars:
   - name: REDIS_PASSWORD
     valueFrom:
-      secretKeyRef: {name: harbor-credentials, key: REDIS_PASSWORD}
+      secretKeyRef: {name: redis-harbor-credentials, key: password}
   - name: _REDIS_URL_CORE
-    value: redis://:$(REDIS_PASSWORD)@harbor-redis:6379/0?idle_timeout_seconds=30
+    value: redis://harbor:$(REDIS_PASSWORD)@valkey-master.redis.svc.cluster.local:6379/2?idle_timeout_seconds=30
   # Overrides redis_pool.redis_url in the chart's config.yml (src/jobservice/config/config.go: loadEnvs).
   - name: JOB_SERVICE_POOL_REDIS_URL
-    value: redis://:$(REDIS_PASSWORD)@harbor-redis:6379/1
+    value: redis://harbor:$(REDIS_PASSWORD)@valkey-master.redis.svc.cluster.local:6379/3
 
 registry:
   replicas: 1
@@ -206,10 +210,11 @@ registry:
       requests: {cpu: 100m, memory: 128Mi}
       limits: {cpu: '1', memory: 1Gi}
     extraEnvVars:
-    # Overrides redis.password in config.yml (distribution's REGISTRY_* environment overrides).
+    # Overrides redis.password in config.yml (distribution's REGISTRY_* environment overrides); the user is
+    # redis.external.username above.
     - name: REGISTRY_REDIS_PASSWORD
       valueFrom:
-        secretKeyRef: {name: harbor-credentials, key: REDIS_PASSWORD}
+        secretKeyRef: {name: redis-harbor-credentials, key: password}
   controller:
     image:
       repository: docker.io/jithendar/custom-harbour
@@ -221,7 +226,7 @@ registry:
     # Garbage collection runs here and reads the registry's config.yml, Redis section included.
     - name: REGISTRY_REDIS_PASSWORD
       valueFrom:
-        secretKeyRef: {name: harbor-credentials, key: REDIS_PASSWORD}
+        secretKeyRef: {name: redis-harbor-credentials, key: password}
   nodeSelector:
     kubernetes.io/hostname: mk4-m05
 

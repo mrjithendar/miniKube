@@ -231,10 +231,12 @@ def test_redis_urls_carry_the_password_at_runtime(component, names):
     env = VALUES[component]['extraEnvVars']
     order = [e['name'] for e in env]
     assert order[0] == 'REDIS_PASSWORD'   # $(VAR) only expands variables defined earlier in the list
+    assert env[0]['valueFrom'] == {'secretKeyRef': {'name': 'redis-harbor-credentials', 'key': 'password'}}
     addr = VALUES['redis']['external']['addr']
+    assert addr == 'valkey-master.redis.svc.cluster.local:6379'
     for name in names:
         value = next(e['value'] for e in env if e['name'] == name)
-        assert value.startswith(f'redis://:$(REDIS_PASSWORD)@{addr}/'), value
+        assert value.startswith(f'redis://harbor:$(REDIS_PASSWORD)@{addr}/'), value
     indexes = {'_REDIS_URL_CORE': 'coreDatabaseIndex', '_REDIS_URL_REG': 'registryDatabaseIndex', 'JOB_SERVICE_POOL_REDIS_URL': 'jobserviceDatabaseIndex'}
     for name in names:
         value = next(e['value'] for e in env if e['name'] == name)
@@ -244,14 +246,23 @@ def test_redis_urls_carry_the_password_at_runtime(component, names):
 def test_registry_containers_get_the_redis_password():
     for container in ('registry', 'controller'):
         env = VALUES['registry'][container]['extraEnvVars']
-        assert env == [{'name': 'REGISTRY_REDIS_PASSWORD', 'valueFrom': {'secretKeyRef': {'name': 'harbor-credentials', 'key': 'REDIS_PASSWORD'}}}]
+        assert env == [{'name': 'REGISTRY_REDIS_PASSWORD', 'valueFrom': {'secretKeyRef': {'name': 'redis-harbor-credentials', 'key': 'password'}}}]
+    assert VALUES['redis']['external']['username'] == 'harbor'
+
+
+def test_redis_is_the_shared_valkey_within_the_harbor_tenant():
+    # minikube-infrastructure/vars/mk4.tfvars: redis_tenants.harbor = databases [2, 3, 4, 5]
+    external = VALUES['redis']['external']
+    indexes = {external[k] for k in ('coreDatabaseIndex', 'jobserviceDatabaseIndex', 'registryDatabaseIndex', 'trivyAdapterIndex')}
+    assert indexes == {'2', '3', '4', '5'}
+    assert not [d for d in manifests() if 'redis' in d['metadata']['name']]   # no Redis of Harbor's own
 
 
 def test_database_and_redis_volumes_survive_prune_and_sync_first():
-    for name in ('harbor-postgres-data', 'harbor-redis-data'):
+    for name in ('harbor-postgres-data',):
         annotations = by_name('PersistentVolumeClaim')[name]['metadata']['annotations']
         assert annotations['argocd.argoproj.io/sync-options'] == 'Prune=false,Delete=false'
-    for name in ('harbor-postgres', 'harbor-redis'):
+    for name in ('harbor-postgres',):
         assert by_name('StatefulSet')[name]['metadata']['annotations']['argocd.argoproj.io/sync-wave'] == '-1'
     claim = VALUES['persistence']['persistentVolumeClaim']['registry']
     assert claim['annotations']['argocd.argoproj.io/sync-options'] == 'Prune=false,Delete=false'
@@ -272,16 +283,6 @@ def test_nothing_waits_on_a_later_sync_wave():
             if 'persistentVolumeClaim' in volume:
                 claim = by_name('PersistentVolumeClaim')[volume['persistentVolumeClaim']['claimName']]
                 assert wave(claim) <= wave(workload), volume
-
-
-def test_redis_password_never_reaches_a_command_line():
-    container = by_name('StatefulSet')['harbor-redis']['spec']['template']['spec']['containers'][0]
-    script = container['args'][0]
-    assert 'requirepass' in script and '> /run/valkey/valkey.conf' in script and 'unset REDIS_PASSWORD' in script
-    assert not re.search(r'valkey-server[^\n]*\$REDIS_PASSWORD', script)
-    assert {'name': 'REDISCLI_AUTH', 'valueFrom': {'secretKeyRef': {'name': 'harbor-credentials', 'key': 'REDIS_PASSWORD'}}} in container['env']
-    for probe in ('readinessProbe', 'livenessProbe'):
-        assert ' -a ' not in ' '.join(container[probe]['exec']['command'])
 
 
 def test_backup_is_suspended_and_dumps_before_copying():
@@ -320,7 +321,6 @@ def test_generated_credentials_meet_harbor_rules():
     assert len(values['secretKey']) == 16 and len(values['CSRF_KEY']) == 32
     admin = values['HARBOR_ADMIN_PASSWORD']
     assert re.search('[A-Z]', admin) and re.search('[a-z]', admin) and re.search('[0-9]', admin) and 8 <= len(admin) <= 128
-    assert re.fullmatch('[0-9a-f]+', values['REDIS_PASSWORD'])   # embedded unescaped in redis:// URLs
     secrets_only = [v for k, v in values.items() if k != 'REGISTRY_HTPASSWD']
     assert len(set(secrets_only)) == len(secrets_only)
 

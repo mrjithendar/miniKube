@@ -8,9 +8,6 @@ resources:
 - harbor-postgres-data-pvc.yaml
 - harbor-postgres-service.yaml
 - harbor-postgres-statefulset.yaml
-- harbor-redis-data-pvc.yaml
-- harbor-redis-service.yaml
-- harbor-redis-statefulset.yaml
 - harbor-virtualservice.yaml
 - harbor-registry-peerauthentication.yaml
 - harbor-backup-cronjob.yaml

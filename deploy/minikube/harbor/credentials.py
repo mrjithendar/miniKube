@@ -1,7 +1,8 @@
 """Create harbor/harbor-credentials once, without printing it; never rotate it.
 
 Every credential the Harbor chart would otherwise generate at render time lives here (values.yaml names each key),
-as do the PostgreSQL and Redis passwords for manifests/harbor-postgres-* and manifests/harbor-redis-*.
+as does the PostgreSQL password for manifests/harbor-postgres-*. Redis is the shared Valkey: its password is in
+redis-harbor-credentials, written by Terraform (minikube-infrastructure/redis.tf).
 Back it up with the database: secretKey encrypts stored registry credentials, and the database password is
 written into the data directory on first start. README.md "Backup and restore".
 """
@@ -15,7 +16,7 @@ import subprocess
 NAMESPACE, NAME = 'harbor', 'harbor-credentials'
 REGISTRY_USER = 'harbor_registry_user'      # registry.credentials.username in values.yaml
 KEYS = ('HARBOR_ADMIN_PASSWORD', 'secretKey', 'secret', 'CSRF_KEY', 'JOBSERVICE_SECRET', 'REGISTRY_HTTP_SECRET',
-        'REGISTRY_PASSWD', 'REGISTRY_HTPASSWD', 'password', 'REDIS_PASSWORD')
+        'REGISTRY_PASSWD', 'REGISTRY_HTPASSWD', 'password')
 
 
 def admin_password():
@@ -45,7 +46,6 @@ def generate():
         'REGISTRY_PASSWD': registry_password,
         'REGISTRY_HTPASSWD': htpasswd(REGISTRY_USER, registry_password),
         'password': secrets.token_hex(24),             # PostgreSQL user harbor
-        'REDIS_PASSWORD': secrets.token_hex(24),       # hex: it is embedded in redis:// URLs unescaped
     }
 
 

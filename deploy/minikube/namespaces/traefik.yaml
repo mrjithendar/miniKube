@@ -1,6 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: traefik
-  labels:
-    istio-injection: enabled   # Istio sidecars for the Kiali traffic graph; pods get one when they restart

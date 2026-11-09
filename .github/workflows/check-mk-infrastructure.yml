@@ -8,10 +8,11 @@ on:
     paths:
       - 'minikube-infrastructure/**'
       - 'deploy/minikube/cert-manager/**'
-      - 'deploy/minikube/traefik/values.yaml'
       - 'deploy/minikube/metrics-server/values.yaml'
       - 'deploy/minikube/istio/**'
       - 'deploy/minikube/observability/**'
+      - 'deploy/minikube/storage/**'
+      - 'deploy/minikube/postgres/**'
       - '.github/mk4-terraform-kubeconfig.yaml'
       - '.github/workflows/*-mk-infrastructure.yml'
 
@@ -69,3 +70,8 @@ jobs:
             helm lint "deploy/minikube/$chart"
             helm template check "deploy/minikube/$chart" > /dev/null
           done
+          helm lint deploy/minikube/storage/local-path-provisioner -f deploy/minikube/storage/local-path.yaml
+          helm template check deploy/minikube/storage/local-path-provisioner -f deploy/minikube/storage/local-path.yaml > /dev/null
+          # Refuses to render without an allowlist (it would otherwise lock everyone out or let everyone in).
+          helm lint deploy/minikube/postgres/access --set 'allowedIps[0]=192.0.2.1/32'
+          helm template check deploy/minikube/postgres/access --set 'allowedIps[0]=192.0.2.1/32' > /dev/null

@@ -387,9 +387,3 @@ def test_create_secrets_offers_harbor(capsys):
     run.assert_not_called()
     assert 'harbor/harbor-credentials: preserve existing' in capsys.readouterr().out
 
-
-def test_traefik_reads_large_layers():
-    values = yaml.safe_load((ROOT / 'deploy/minikube/traefik/values.yaml').read_text())
-    timeout = values['ports']['websecure']['transport']['respondingTimeouts']['readTimeout']
-    assert int(timeout.removesuffix('s')) >= 600
-    assert 'transport' not in values['ports']['web']

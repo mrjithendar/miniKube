@@ -1,0 +1,19 @@
+# CloudNativePG operator (chart cnpg/cloudnative-pg). Terraform: minikube-infrastructure/postgres.tf.
+# Watches every namespace, so other applications can create their own Cluster objects later.
+image:
+  pullPolicy: Always
+crds:
+  create: true
+config:
+  clusterWide: true
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+# mk4's Prometheus is a plain Deployment (no Prometheus Operator, no PodMonitor CRD): the job is in its values.
+monitoring:
+  podMonitorEnabled: false
+  grafanaDashboard:
+    create: false

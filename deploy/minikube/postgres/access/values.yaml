@@ -1,0 +1,28 @@
+# Release postgres-access, namespace postgres-db (minikube-infrastructure/postgres.tf), beside the CloudNativePG cluster.
+#
+# A URL path cannot carry the PostgreSQL protocol (it is not HTTP), so there are two ways in:
+#   https://jithendar.com/postgres/   Adminer, a web client (sign in with a database login)
+#   postgres.jithendar.com:443        psql and other clients: the Istio gateway terminates TLS (wildcard certificate,
+#                                     ALPN "postgresql" for libpq's direct TLS) and forwards TCP to the primary:
+#     psql "host=postgres.jithendar.com port=443 dbname=<name> user=<name> sslmode=verify-full sslrootcert=system sslnegotiation=direct"
+# The Gateway's TLS server for the host and the /postgres route are in deploy/minikube/istio/edge/values.yaml.
+# Both are refused before any route unless the client address is in allowedIps.
+
+# CloudNativePG Cluster name (deploy/minikube/postgres/cluster.yaml, release postgres-cluster).
+cluster: postgres-cluster
+
+ui:
+  # Path on jithendar.com; must match the edge routing table's entry (route "postgres").
+  prefix: /postgres
+  image: adminer:latest
+
+tcp:
+  host: postgres.jithendar.com
+
+# Client addresses allowed through /postgres and postgres.jithendar.com (CIDRs). Set by Terraform
+# (var.postgres_allowed_ips, vars/mk4.tfvars). Rendering fails when empty: never open, never silently locked.
+allowedIps: []
+
+gatewayNamespace: istio-ingress
+gatewaySelector:
+  istio: ingressgateway

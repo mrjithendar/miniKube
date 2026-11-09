@@ -1,0 +1,1 @@
+{{ include "mesh.allowKnownCallers" (dict "root" . "namespace" "cert-manager") }}

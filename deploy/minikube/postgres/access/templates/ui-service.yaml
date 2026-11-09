@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: postgres-ui
+spec:
+  selector:
+    app: postgres-ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -1,7 +1,7 @@
 name: Create minikube infrastructure
 
-# Applies minikube-infrastructure/ (Helm releases on mk4: Traefik, metrics-server, cert-manager, Let's Encrypt, Istio (+ CNI, ingress gateway), Kiali,
-# Prometheus, Grafana, Loki, OpenTelemetry Collector, Jaeger) on pushes to master, or by hand with "plan only" to see
+# Applies minikube-infrastructure/ (Helm releases on mk4: metrics-server, cert-manager, Let's Encrypt, Istio (+ CNI, ingress gateway), Kiali,
+# Prometheus, Grafana, Loki, OpenTelemetry Collector, Jaeger, local-path storage, CloudNativePG + PostgreSQL) on pushes to master, or by hand with "plan only" to see
 # drift. Pull requests are checked by check-mk-infrastructure.yml.
 # Off until repository variable MINIKUBE_TERRAFORM_APPLY is "true": set it after the one-time move of the live add-ons
 # off Argo CD (minikube-infrastructure/README.md), never before.
@@ -24,10 +24,11 @@ on:
     paths:
       - 'minikube-infrastructure/**'
       - 'deploy/minikube/cert-manager/**'
-      - 'deploy/minikube/traefik/values.yaml'
       - 'deploy/minikube/metrics-server/values.yaml'
       - 'deploy/minikube/istio/**'
       - 'deploy/minikube/observability/**'
+      - 'deploy/minikube/storage/**'
+      - 'deploy/minikube/postgres/**'
       - '.github/mk4-terraform-kubeconfig.yaml'
       - '.github/workflows/create-mk-infrastructure.yml'
 
@@ -152,11 +153,9 @@ jobs:
         run: |
           set -euo pipefail
           # Only this root's releases: the argocd release on mk4 belongs to bootstrap-cluster.sh.
-          releases='^(traefik|metrics-server|cert-manager|letsencrypt-jithendar|istio-base|istio-cni|istiod|istio-ingressgateway|istio-edge|kiali|prometheus|grafana-dashboards|grafana|loki|otel-collector|jaeger)$'
+          releases='^(metrics-server|cert-manager|letsencrypt-jithendar|istio-base|istio-cni|istiod|istio-ingressgateway|istio-edge|istio-mesh|kiali|prometheus|grafana-dashboards|grafana|loki|otel-collector|jaeger|local-path-provisioner|cnpg|postgres-cluster|postgres-access)$'
           { echo '### Helm releases'; echo '```'; helm list -A --kube-context mk4 --filter "$releases"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          # Traefik only while vars/mk4.tfvars keeps traefik_enabled = true (traefik.tf).
-          expected=15
-          if grep -Eq '^traefik_enabled *= *true' minikube-infrastructure/vars/mk4.tfvars; then expected=16; fi
+          expected=20
           deployed=$(helm list -A --kube-context mk4 --filter "$releases" --deployed -q | wc -l)
           [[ "$deployed" -eq "$expected" ]] || { echo "::error::$deployed of $expected releases deployed"; helm list -A --kube-context mk4 --filter "$releases"; exit 1; }
           # A freshly started pod (Kiali warms its caches) and a new route answer 503 for a while: retry for 3 min.

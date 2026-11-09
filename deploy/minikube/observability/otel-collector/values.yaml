@@ -1,0 +1,3 @@
+# Image reference only, kept here (not in templates/) so Dependabot's helm updater can bump it.
+# Collector configuration stays in collector.yaml.
+image: otel/opentelemetry-collector:0.162.0

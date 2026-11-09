@@ -29,7 +29,7 @@ spec:
       automountServiceAccountToken: false
       containers:
       - name: loki
-        image: grafana/loki:3.7.9
+        image: {{ .Values.loki.image | quote }}
         args:
         - -config.file=/etc/loki/loki.yaml
         ports:
@@ -72,7 +72,7 @@ spec:
         emptyDir: {}
       initContainers:
       - name: data-permissions
-        image: busybox:1.37.0
+        image: {{ .Values.volumePermissions.image | quote }}
         command:
         - sh
         - -ec

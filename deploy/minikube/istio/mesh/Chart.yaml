@@ -1,0 +1,5 @@
+apiVersion: v2
+name: istio-mesh
+version: 0.1.0
+type: application
+description: Mesh-wide policies for mk4 - STRICT mTLS, which namespaces may call the platform namespaces, and the gateway's access log

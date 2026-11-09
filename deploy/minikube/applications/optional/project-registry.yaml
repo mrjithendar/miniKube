@@ -32,12 +32,6 @@ spec:
     kind: CronJob
   - group: networking.istio.io
     kind: VirtualService
-  # The old Traefik routes stay tracked until they are deleted by hand (deploy/minikube/istio/README.md, step 4);
-  # remove these two in the cleanup after Traefik is gone.
-  - group: networking.k8s.io
-    kind: Ingress
-  - group: traefik.io
-    kind: Middleware
   - group: cert-manager.io
     kind: Certificate
   - group: cert-manager.io

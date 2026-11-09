@@ -29,7 +29,7 @@ spec:
       automountServiceAccountToken: true
       containers:
       - name: alloy
-        image: grafana/alloy:v1.21.2
+        image: {{ .Values.alloy.image | quote }}
         args:
         - run
         - --server.http.listen-addr=0.0.0.0:12345
@@ -76,7 +76,7 @@ spec:
       serviceAccountName: alloy
       initContainers:
       - name: data-permissions
-        image: busybox:1.37.0
+        image: {{ .Values.volumePermissions.image | quote }}
         command:
         - sh
         - -ec

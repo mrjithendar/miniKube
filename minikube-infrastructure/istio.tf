@@ -1,7 +1,7 @@
 # Istio service mesh: CRDs (base), the CNI node agent, the control plane (istiod) and an ingress gateway, one version
-# for all four, plus the gateway's public routing (istio-edge). Traefik still receives every connection from the host and
-# hands jithendar.com/www to the gateway (deploy/minikube/istio/edge/values.yaml has the migration steps). Sidecars are
-# injected only into namespaces labelled istio-injection=enabled.
+# for all four, plus the gateway's public routing (istio-edge) and the mesh-wide policies (istio-mesh). The host's
+# HAProxy sends every public connection to the gateway. Sidecars are injected only into namespaces labelled
+# istio-injection=enabled.
 resource "helm_release" "istio_base" {
   name             = "istio-base"
   namespace        = "istio-system"
@@ -45,7 +45,7 @@ resource "helm_release" "istiod" {
 }
 
 # Istio ingress gateway (Envoy, injected from istiod's "gateway" template) in its own namespace. Values:
-# deploy/minikube/istio/ingressgateway.yaml. NodePort 31080/31443; Traefik keeps 30080/30443 from the host.
+# deploy/minikube/istio/ingressgateway.yaml. NodePort 31080/31443, which the host forwards 80/443 to.
 resource "helm_release" "istio_ingressgateway" {
   name             = "istio-ingressgateway"
   namespace        = "istio-ingress"
@@ -63,8 +63,8 @@ resource "helm_release" "istio_ingressgateway" {
 }
 
 # mk4's public edge, namespace istio-ingress, local chart deploy/minikube/istio/edge: Gateway public, its wildcard
-# certificate, the jithendar.com routing table, logins, read-only rules, PROXY protocol, compression, and while Traefik
-# runs its hand-off routes. Applications bind delegate VirtualServices to the routing table.
+# certificate, the jithendar.com routing table, logins, read-only rules, PROXY protocol, compression and response
+# headers. Applications bind delegate VirtualServices to the routing table.
 #
 # The logins (htpasswd lines) come from Secret istio-ingress/gateway-basic-auth, written by
 # scripts/istio/gateway-basic-auth.py from the applications' own login Secrets. They are in this state file and in the
@@ -88,13 +88,7 @@ resource "helm_release" "istio_edge" {
   namespace = "istio-ingress"
   chart     = "${local.minikube}/istio/edge"
 
-  values = [
-    file("${local.minikube}/istio/edge/values.yaml"),
-    yamlencode({
-      traefikHandoff = { enabled = var.traefik_enabled }
-      proxyProtocol  = { requireHeader = !var.traefik_enabled }
-    }),
-  ]
+  values = [file("${local.minikube}/istio/edge/values.yaml")]
   set_sensitive = [for name in local.basic_auth_names : {
     name  = "basicAuthUsers.${name}"
     value = lookup(local.gateway_basic_auth, name, "")
@@ -113,6 +107,21 @@ resource "helm_release" "istio_edge" {
   }
 
   # Gateway/EnvoyFilter/AuthorizationPolicy (istio-base CRDs, a running gateway), Certificate (cert-manager and
-  # ClusterIssuer letsencrypt-dns), and while Traefik runs, IngressRoute/ServersTransport (Traefik's CRDs).
+  # ClusterIssuer letsencrypt-dns).
   depends_on = [helm_release.istio_ingressgateway, helm_release.letsencrypt]
+}
+
+# Mesh-wide policies, chart deploy/minikube/istio/mesh: STRICT mTLS for every namespace without its own
+# PeerAuthentication, AuthorizationPolicies for the platform namespaces (dry run until the report is clean), and the
+# gateway's access log. After Kiali, which must be meshed before Prometheus turns STRICT.
+resource "helm_release" "istio_mesh" {
+  name      = "istio-mesh"
+  namespace = "istio-system"
+  chart     = "${local.minikube}/istio/mesh"
+  values    = [file("${local.minikube}/istio/mesh/values.yaml")]
+
+  wait    = true
+  timeout = var.helm_timeout
+
+  depends_on = [helm_release.istiod, helm_release.istio_ingressgateway, helm_release.kiali]
 }

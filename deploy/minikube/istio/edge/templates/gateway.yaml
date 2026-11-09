@@ -7,8 +7,8 @@ metadata:
 spec:
   selector: {{ toYaml $.Values.selector | nindent 4 }}
   servers:
-    # One server for every HTTPS host: one filter chain, so a request's Host may differ from its SNI (Traefik's
-    # hand-off sends SNI jithendar.com for all of them).
+    # One server for every HTTPS host: one filter chain, so a request's Host may differ from its SNI (a client may
+    # reuse one HTTP/2 connection for several hosts the wildcard certificate covers).
     - port: {number: 443, name: https, protocol: HTTPS}
       hosts: {{ toYaml .https | nindent 8 }}
       tls:

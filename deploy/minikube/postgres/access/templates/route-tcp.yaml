@@ -1,0 +1,20 @@
+# {{ .Values.tcp.host }}:443 → the primary. The Gateway's TLS server (edge chart, gateway.tls) terminates TLS and
+# matches this host by SNI; the bytes after that are plain PostgreSQL protocol to {{ .Values.cluster }}-rw.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: postgres-tcp
+  namespace: {{ .Release.Namespace }}
+spec:
+  hosts:
+    - {{ .Values.tcp.host }}
+  gateways:
+    - {{ printf "%s/public" .Values.gatewayNamespace }}
+  tcp:
+    - match:
+        - port: 443
+      route:
+        - destination:
+            host: {{ printf "%s-rw.%s.svc.cluster.local" .Values.cluster .Release.Namespace }}
+            port:
+              number: 5432

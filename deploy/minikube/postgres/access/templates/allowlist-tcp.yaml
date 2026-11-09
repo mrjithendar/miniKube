@@ -1,0 +1,20 @@
+{{- if empty .Values.allowedIps }}
+{{- fail "allowedIps is empty: set var.postgres_allowed_ips (vars/mk4.tfvars) to the client addresses allowed in" }}
+{{- end }}
+# {{ .Values.tcp.host }}: decided on the TLS server name, before any byte reaches the database.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: postgres-tcp-allowlist
+  namespace: {{ .Values.gatewayNamespace }}
+spec:
+  selector:
+    matchLabels: {{ toYaml .Values.gatewaySelector | nindent 6 }}
+  action: DENY
+  rules:
+    - from:
+        - source:
+            notRemoteIpBlocks: {{ toYaml .Values.allowedIps | nindent 14 }}
+      when:
+        - key: connection.sni
+          values: [{{ .Values.tcp.host | quote }}]

@@ -127,7 +127,7 @@ def main():
         print('Create missing internal roboshop-secrets; preserve existing credentials.')
         print(f'Context {args.context}: refresh ECR credentials in managed namespaces (excluding kube-system).')
         if not args.pull_secrets_only:
-            print('Then Argo CD -> Argo CD ingress (Traefik, cert-manager and the add-ons come first: minikube-infrastructure/)')
+            print('Then Argo CD -> Argo CD ingress (the Istio gateway, cert-manager and the add-ons come first: minikube-infrastructure/)')
         if args.schedule_pull_secrets:
             print('Install six-hour ECR refresh CronJob; requires AWS keys in roboshop-secrets.')
         if args.deploy_apps:

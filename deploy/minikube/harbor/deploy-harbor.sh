@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build Harbor's images for arm64, push them to a private Docker Hub repository, and deploy Harbor on mk4 through
-# its Argo CD Application. README.md lists what must exist first (DNS, Traefik timeout).
+# its Argo CD Application. README.md lists what must exist first (DNS, Docker Hub tokens).
 #
 #   1. build  Harbor's own Makefile on the pinned tag, on a native arm64 Docker host that is not the mk4 server
 #             (image builds there froze the cluster twice: runner/README.md in the tools repository). An Apple Silicon Mac works, and

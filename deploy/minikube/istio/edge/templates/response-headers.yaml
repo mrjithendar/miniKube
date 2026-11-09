@@ -1,0 +1,21 @@
+{{- with .Values.removeResponseHeaders }}
+# Response headers the gateway never passes to visitors. x-envoy-upstream-service-time comes from every Envoy on the way
+# (the applications' sidecars too) and tells visitors how long each backend took. Applied to every route configuration
+# on the gateway, after the routes' own header changes.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: response-headers
+  namespace: {{ $.Release.Namespace | quote }}
+spec:
+  workloadSelector:
+    labels: {{ toYaml $.Values.selector | nindent 6 }}
+  configPatches:
+    - applyTo: ROUTE_CONFIGURATION
+      match:
+        context: GATEWAY
+      patch:
+        operation: MERGE
+        value:
+          response_headers_to_remove: {{ toYaml . | nindent 12 }}
+{{- end }}

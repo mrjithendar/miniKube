@@ -1,0 +1,5 @@
+apiVersion: v2
+name: postgres-access
+description: Reaching mk4's CloudNativePG cluster from outside (Adminer at /postgres, psql at postgres.jithendar.com:443), its IP allowlist, NetworkPolicies and metrics Service.
+type: application
+version: 0.1.0

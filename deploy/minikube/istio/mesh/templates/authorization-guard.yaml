@@ -1,0 +1,5 @@
+{{- /* Renders nothing. A namespace in authorization.namespaces needs templates/authorization-<namespace>.yaml (checked
+       by tests/test_istio_edge.py); istio-system is refused here. */}}
+{{- range $ns, $_ := .Values.authorization.namespaces }}
+{{- if eq $ns "istio-system" }}{{ fail "authorization.namespaces must not list istio-system: a policy there applies to the whole mesh" }}{{ end }}
+{{- end }}

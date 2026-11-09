@@ -23,10 +23,19 @@ service:
       nodePort: 31443
 # No gatewayTopology.numTrustedProxies: nothing in front sets X-Forwarded-For any more (HAProxy forwards TCP), and the
 # client address comes from the PROXY protocol. Trusting a hop would let visitors choose their own address.
-# One replica, no HPA: small cluster, and metrics-server load should not decide gateway count.
+# Two replicas on different nodes and a PodDisruptionBudget: the gateway is mk4's only way in, so a node drain or a
+# rollout must never take the last one. No HPA: small cluster, and metrics-server load should not decide gateway count.
 autoscaling:
   enabled: false
-replicaCount: 1
+replicaCount: 2
+podDisruptionBudget:
+  minAvailable: 1
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels: {istio: ingressgateway}
 resources:
   requests:
     cpu: 50m

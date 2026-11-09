@@ -1,0 +1,101 @@
+# PostgreSQL cluster "postgres-cluster" in namespace postgres-db (chart cnpg/cluster). Terraform: postgres.tf.
+#
+# The one PostgreSQL for every application on mk4 (replacing each application's own pod). One primary and two
+# streaming replicas, each on its own node (required anti-affinity) with a local-path volume pinned to that node. The
+# operator fails over to a replica if the primary's pod or node goes. Services:
+#   postgres-cluster-pooler-rw.postgres-db.svc:5432   PgBouncer in front of the primary: what applications use
+#   postgres-cluster-rw.postgres-db.svc:5432          primary (reads and writes)
+#   postgres-cluster-ro.postgres-db.svc:5432          replicas only
+#   postgres-cluster-r.postgres-db.svc:5432           any instance
+# Applications' databases, roles and credentials are not here: Terraform adds them from var.postgres_databases
+# (postgres.tf: cluster.roles and databases are merged over this file). Bootstrap logins the operator writes:
+# postgres-cluster-app (database "app", a scratch database no application uses), postgres-cluster-superuser.
+# Public access: deploy/minikube/postgres/access (/postgres and postgres.jithendar.com).
+type: postgresql
+version:
+  # Image ghcr.io/cloudnative-pg/postgresql:18 (multi-arch; mk4 is arm64). The major tag follows minor releases.
+  postgresql: "18"
+mode: standalone
+
+cluster:
+  instances: 3
+  imagePullPolicy: Always
+  storage:
+    # Every application's data, three times (one copy per instance). On 2026-11-09 the four application databases
+    # together were about 0.4G. local-path does not enforce the size: all volumes share mk4's one disk (full on
+    # 2026-11-08), so watch `df` on the host rather than this number.
+    size: 10Gi
+    storageClass: local-path
+  affinity:
+    # minikube nodes have no zone label: spread by node.
+    topologyKey: kubernetes.io/hostname
+    enablePodAntiAffinity: true
+    podAntiAffinityType: required
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: switchover
+  enableSuperuserAccess: true
+  enablePDB: true
+  initdb:
+    database: app
+    owner: app
+  postgresql:
+    parameters:
+      # Shared by every application: each role is also capped (connection_limit, postgres.tf). PgBouncer keeps the
+      # number of server connections well below this.
+      max_connections: "300"
+      shared_buffers: 512MB
+      effective_cache_size: 1536MB
+      # One slow query or forgotten transaction must not hold locks for every other application.
+      idle_in_transaction_session_timeout: "600000"
+      # Setting a pg_stat_statements parameter makes CloudNativePG preload the library; `CREATE EXTENSION
+      # pg_stat_statements` in a database to see which application's queries cost the most.
+      pg_stat_statements.track: top
+      # Reached through the Istio gateway: log who connects.
+      log_connections: "on"
+      log_disconnections: "on"
+  # The exporter on :9187 always runs; Prometheus scrapes it through the headless Service postgres-cluster-metrics
+  # (access chart). "enabled" would only create a PodMonitor, which mk4 has no CRD for.
+  monitoring:
+    enabled: false
+
+# PgBouncer in front of the primary, session mode: every client feature works (prepared statements, advisory locks,
+# SET, LISTEN), unlike transaction mode. It caps and reuses server connections and survives a failover without
+# applications changing host. Its own login (cnpg_pooler_pgbouncer, client certificate) is managed by the operator.
+poolers:
+  - name: rw
+    type: rw
+    poolMode: session
+    instances: 2
+    parameters:
+      max_client_conn: "1000"
+      default_pool_size: "20"
+    template:
+      spec:
+        affinity:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels:
+                      cnpg.io/poolerName: postgres-cluster-pooler-rw
+        containers:
+          - name: pgbouncer
+            resources:
+              requests:
+                cpu: 20m
+                memory: 32Mi
+              limits:
+                memory: 256Mi
+
+# No object store on mk4 yet: no base backups, no WAL archive. Replicas are not backups, and with every application
+# here this is the one gap to close before moving them (README.md, PostgreSQL).
+backups:
+  enabled: false

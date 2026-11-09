@@ -6,7 +6,7 @@ metadata:
 spec:
   # The add-on namespaces (kube-system, cert-manager, istio-system, monitoring, observability) are left out: Terraform
   # owns them (minikube-infrastructure/).
-  description: mk4 workloads; Argo CD, Traefik and the Terraform add-ons are managed outside Argo CD
+  description: mk4 workloads; Argo CD and the Terraform add-ons are managed outside Argo CD
   sourceRepos:
   - https://github.com/mrjithendar/roboshop-ai.git
   - https://github.com/mrjithendar/miniKube.git

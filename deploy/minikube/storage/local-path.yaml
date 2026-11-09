@@ -1,0 +1,36 @@
+# Values for the vendored chart ./local-path-provisioner (rancher/local-path-provisioner v0.0.37, copied unchanged from
+# the tag's deploy/chart: the project publishes no Helm repository). Terraform: minikube-infrastructure/local-path.tf.
+#
+# Why a second StorageClass: minikube's "standard" (k8s.io/minikube-hostpath) makes PVs with no nodeAffinity, so on
+# mk4's 8 nodes a rescheduled pod lands on another node and sees an empty folder (shipping-db, 2026-11-08). local-path
+# PVs carry nodeAffinity to the node that holds the data, and WaitForFirstConsumer picks that node only when the first
+# pod is scheduled. A pod therefore always comes back to its data, or stays Pending if that node is gone.
+# "standard" stays the default class; workloads opt in with storageClassName: local-path.
+storageClass:
+  create: true
+  name: local-path
+  defaultClass: false
+  # Retain: deleting a PVC (or the CloudNativePG Cluster that owns it) leaves the PV and its folder. Clean up by hand
+  # (minikube-infrastructure/README.md, PostgreSQL).
+  reclaimPolicy: Retain
+  volumeBindingMode: WaitForFirstConsumer
+
+# Inside each node container. With minikube's docker driver /var is the node's named Docker volume, so the data
+# survives the node container being recreated; /opt (the chart default) would not.
+nodePathMap:
+  - node: DEFAULT_PATH_FOR_NON_LISTED_NODES
+    paths:
+      - /var/local-path-provisioner
+
+image:
+  pullPolicy: Always
+helperImage:
+  repository: docker.io/library/busybox
+  tag: latest
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi

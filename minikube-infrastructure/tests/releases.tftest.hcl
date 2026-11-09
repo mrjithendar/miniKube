@@ -18,19 +18,11 @@ mock_provider "kubernetes" {
 }
 mock_provider "random" {}
 
-# Mock providers cannot import, so never adopt the live Traefik release (traefik.tf); plan a fresh install. The runs
-# below assume Traefik is installed whatever vars/mk4.tfvars says; "without_traefik" covers traefik_enabled = false.
-variables {
-  adopt_existing_traefik = false
-  traefik_enabled        = true
-}
-
 run "pinned_releases" {
   command = plan
 
   assert {
     condition = (
-      helm_release.traefik[0].version == "42.0.0" &&
       helm_release.metrics_server.version == "3.14.0" &&
       helm_release.cert_manager.version == "v1.20.4" &&
       helm_release.istio_base.version == helm_release.istiod.version &&
@@ -45,7 +37,6 @@ run "pinned_releases" {
 
   assert {
     condition = (
-      helm_release.traefik[0].namespace == "traefik" &&
       helm_release.metrics_server.namespace == "kube-system" &&
       helm_release.cert_manager.namespace == "cert-manager" &&
       helm_release.letsencrypt.namespace == "cert-manager" &&
@@ -53,6 +44,7 @@ run "pinned_releases" {
       helm_release.istio_cni.namespace == "istio-system" &&
       helm_release.istio_ingressgateway.namespace == "istio-ingress" &&
       helm_release.istio_edge.namespace == helm_release.istio_ingressgateway.namespace &&
+      helm_release.istio_mesh.namespace == "istio-system" &&
       helm_release.kiali.namespace == "istio-system" &&
       helm_release.prometheus.namespace == "monitoring" &&
       helm_release.grafana.namespace == "monitoring" &&
@@ -87,16 +79,77 @@ run "missing_jithendar_dashboards_fail" {
   expect_failures = [helm_release.grafana_dashboards]
 }
 
-# After the host forwards to the gateway: Traefik uninstalled, the gateway insists on the PROXY protocol.
-run "without_traefik" {
+run "postgres_releases" {
   command = plan
 
   variables {
-    traefik_enabled = false
+    postgres_allowed_ips = ["192.0.2.1/32"]
   }
 
   assert {
-    condition     = length(helm_release.traefik) == 0
-    error_message = "traefik_enabled = false must uninstall Traefik."
+    condition = (
+      helm_release.cnpg_operator.version == "0.29.1" &&
+      helm_release.postgres_cluster.version == "0.9.0" &&
+      helm_release.cnpg_operator.namespace == "cnpg-system" &&
+      helm_release.postgres_cluster.namespace == "postgres-db" &&
+      helm_release.postgres_access.namespace == helm_release.postgres_cluster.namespace &&
+      helm_release.local_path_provisioner.namespace == "local-path-storage"
+    )
+    error_message = "CloudNativePG chart versions are pinned; the cluster and its access chart share namespace postgres-db."
   }
+}
+
+run "postgres_without_allowlist_fails" {
+  command = plan
+
+  variables {
+    postgres_allowed_ips = []
+  }
+
+  expect_failures = [helm_release.postgres_access]
+}
+
+run "postgres_tenants_get_a_database_role_and_credentials" {
+  command = plan
+
+  variables {
+    postgres_allowed_ips = ["192.0.2.1/32"]
+    postgres_databases = {
+      shop = { namespace = "shop-ns" }
+      blog = { namespace = "blog-ns", connection_limit = 10 }
+    }
+  }
+
+  assert {
+    condition = (
+      kubernetes_secret_v1.postgres_role["shop"].metadata[0].namespace == "postgres-db" &&
+      kubernetes_secret_v1.postgres_role["shop"].metadata[0].name == "db-shop" &&
+      kubernetes_secret_v1.postgres_role["shop"].type == "kubernetes.io/basic-auth" &&
+      kubernetes_secret_v1.postgres_app["blog"].metadata[0].namespace == "blog-ns" &&
+      kubernetes_secret_v1.postgres_app["blog"].metadata[0].name == "postgres-db-credentials" &&
+      kubernetes_secret_v1.postgres_app["blog"].data.host == "postgres-cluster-pooler-rw.postgres-db.svc.cluster.local" &&
+      kubernetes_secret_v1.postgres_app["blog"].data.dbname == "blog"
+    )
+    error_message = "Each application gets db-<name> in postgres-db and postgres-db-credentials (through PgBouncer) in its namespace."
+  }
+
+  assert {
+    condition = (
+      [for r in local.postgres_tenants.cluster.roles : r.connectionLimit if r.name == "blog"][0] == 10 &&
+      [for r in local.postgres_tenants.cluster.roles : r.connectionLimit if r.name == "shop"][0] == 50 &&
+      alltrue([for d in local.postgres_tenants.databases : d.owner == d.name && d.databaseReclaimPolicy == "retain"])
+    )
+    error_message = "Each database is owned by its own role and kept when its entry is removed."
+  }
+}
+
+run "postgres_reserved_names_refused" {
+  command = plan
+
+  variables {
+    postgres_allowed_ips = ["192.0.2.1/32"]
+    postgres_databases   = { postgres = { namespace = "x" } }
+  }
+
+  expect_failures = [var.postgres_databases]
 }

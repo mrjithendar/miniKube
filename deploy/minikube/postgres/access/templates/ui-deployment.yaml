@@ -1,0 +1,72 @@
+# Adminer (Docker Official Image) at https://jithendar.com{{ .Values.ui.prefix }}/. It holds no credentials: sign in with
+# System "PostgreSQL", server {{ .Values.cluster }}-rw, an application's login (Secret db-<name> in this namespace,
+# database <name>) or {{ .Values.cluster }}-superuser. Its NetworkPolicy lets it reach only this cluster, so the form's "server" field cannot probe anything
+# else. The image serves /var/www/html at "/"; the files are copied under the prefix so session cookies stay scoped to
+# it (same trick as jithendar.com's /db).
+{{- $prefix := trimPrefix "/" .Values.ui.prefix }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: postgres-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-ui
+  template:
+    metadata:
+      labels:
+        app: postgres-ui
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: adminer
+          image: {{ .Values.ui.image }}
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -c
+            - rm -rf /tmp/www && mkdir -p /tmp/www && cp -R /var/www/html /tmp/www/{{ $prefix }} && exec php -S [::]:8080 -t /tmp/www
+          env:
+            - name: ADMINER_DEFAULT_SERVER
+              value: {{ printf "%s-rw" .Values.cluster }}
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

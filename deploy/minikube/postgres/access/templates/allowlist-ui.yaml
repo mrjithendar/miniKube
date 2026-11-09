@@ -1,0 +1,28 @@
+{{- if empty .Values.allowedIps }}
+{{- fail "allowedIps is empty: set var.postgres_allowed_ips (vars/mk4.tfvars) to the client addresses allowed in" }}
+{{- end }}
+# DENY policies on the Istio ingress gateway, which learns each visitor's address from the PROXY protocol (edge chart).
+# Same shape as jithendar.com's db-allowlist / db-tcp-allowlist (jithendar.com minikube/db-access-10-allowlist.yaml).
+#
+# {{ .Values.ui.prefix }}: port 443 only (80 just redirects). The SNI condition keeps this rule off the TCP host: for TCP,
+# Istio drops a DENY rule's HTTP fields, and the rule would then also apply to every connection to that host.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: postgres-ui-allowlist
+  namespace: {{ .Values.gatewayNamespace }}
+spec:
+  selector:
+    matchLabels: {{ toYaml .Values.gatewaySelector | nindent 6 }}
+  action: DENY
+  rules:
+    - to:
+        - operation:
+            ports: ["443"]
+            paths: [{{ .Values.ui.prefix | quote }}, {{ printf "%s/*" .Values.ui.prefix | quote }}]
+      from:
+        - source:
+            notRemoteIpBlocks: {{ toYaml .Values.allowedIps | nindent 14 }}
+      when:
+        - key: connection.sni
+          notValues: [{{ .Values.tcp.host | quote }}]

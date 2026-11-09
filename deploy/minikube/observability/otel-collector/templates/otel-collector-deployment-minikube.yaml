@@ -23,7 +23,7 @@ spec:
       automountServiceAccountToken: false
       containers:
       - name: otel-collector
-        image: otel/opentelemetry-collector:0.162.0
+        image: {{ .Values.image | quote }}
         imagePullPolicy: IfNotPresent
         env: []
         resources:

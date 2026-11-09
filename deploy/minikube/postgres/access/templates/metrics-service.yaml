@@ -1,0 +1,14 @@
+# Every instance's exporter (:9187), found by Prometheus through DNS (job "postgres" in the Prometheus chart).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-metrics" .Values.cluster }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  clusterIP: None
+  selector:
+    cnpg.io/cluster: {{ .Values.cluster }}
+  ports:
+    - name: metrics
+      port: 9187
+      targetPort: 9187

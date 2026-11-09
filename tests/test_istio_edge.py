@@ -1,4 +1,5 @@
-"""mk4's public edge (deploy/minikube/istio/edge): routing order, logins that fail closed, client addresses, Traefik."""
+"""mk4's public edge (deploy/minikube/istio/edge) and mesh policies (istio/mesh): routing order, logins that fail
+closed, client addresses, response headers, mTLS, who may call whom."""
 import json
 from pathlib import Path
 import subprocess
@@ -38,9 +39,12 @@ def test_only_the_owning_namespace_binds_a_hostname():
     gateway = of(render(), 'Gateway', 'public')['spec']
     hosts = [h for s in gateway['servers'] for h in s['hosts']]
     assert all('/' in h and not h.startswith('*/') for h in hosts)
-    https, db, http = gateway['servers']
-    assert https['tls']['credentialName'] == db['tls']['credentialName'] == VALUES['gateway']['certificate']['secretName']
-    assert db['port']['protocol'] == 'TLS' and db['hosts'] == ['jithendar/db.jithendar.com']
+    https, db, postgres, http = gateway['servers']
+    for tcp in (db, postgres):
+        assert tcp['tls']['credentialName'] == https['tls']['credentialName'] == VALUES['gateway']['certificate']['secretName']
+        assert tcp['port']['protocol'] == 'TLS'
+    assert db['hosts'] == ['jithendar/db.jithendar.com']
+    assert postgres['hosts'] == ['postgres-db/postgres.jithendar.com']
     assert http['tls'] == {'httpsRedirect': True}   # plain HTTP never reaches a login
 
 
@@ -73,7 +77,7 @@ def test_logins_run_on_https_only_and_skip_paths_outside_their_prefix():
 
 def test_read_only_rules_never_touch_the_tcp_hosts():
     rules = of(render(), 'AuthorizationPolicy', 'read-only')['spec']['rules']
-    assert rules and all(r['when'] == [{'key': 'connection.sni', 'notValues': ['db.jithendar.com']}] for r in rules)
+    assert rules and all(r['when'] == [{'key': 'connection.sni', 'notValues': ['db.jithendar.com', 'postgres.jithendar.com']}] for r in rules)
     assert all(r['to'][0]['operation']['ports'] == ['443'] for r in rules)
 
 
@@ -89,17 +93,76 @@ def test_clients_cannot_choose_their_address():
     assert 'numTrustedProxies' not in json.dumps(gateway_values)
 
 
-@pytest.mark.parametrize('traefik', [True, False])
-def test_traefik_hand_off_and_the_proxy_header_follow_traefik(traefik):
-    docs = render('--set', f'traefikHandoff.enabled={str(traefik).lower()}',
-                  '--set', f'proxyProtocol.requireHeader={str(not traefik).lower()}')
-    assert bool([d for d in docs if d['apiVersion'].startswith('traefik.io/')]) == traefik
+def test_the_proxy_header_is_required_and_nothing_targets_traefik():
+    docs = render()
+    assert not [d for d in docs if d['apiVersion'].startswith('traefik.io/')]
     allow = {p['patch']['value']['typed_config']['allow_requests_without_proxy_protocol']
              for p in of(docs, 'EnvoyFilter', 'proxy-protocol')['spec']['configPatches']}
-    assert allow == {traefik}
+    assert allow == {False}
+    assert 'traefik' not in (ROOT / 'minikube-infrastructure/istio.tf').read_text()
 
 
-def test_terraform_ties_both_to_traefik_enabled():
-    istio_tf = (ROOT / 'minikube-infrastructure/istio.tf').read_text()
-    assert 'traefikHandoff = { enabled = var.traefik_enabled }' in istio_tf
-    assert 'proxyProtocol  = { requireHeader = !var.traefik_enabled }' in istio_tf
+def test_visitors_never_see_backend_timings():
+    patch = of(render(), 'EnvoyFilter', 'response-headers')['spec']['configPatches'][0]
+    assert patch['applyTo'] == 'ROUTE_CONFIGURATION' and patch['match']['context'] == 'GATEWAY'
+    assert 'x-envoy-upstream-service-time' in patch['patch']['value']['response_headers_to_remove']
+
+
+MESH = ROOT / 'deploy/minikube/istio/mesh'
+
+
+def render_mesh(*args):
+    command = ['helm', 'template', 'istio-mesh', str(MESH), '-n', 'istio-system', *args]
+    return [d for d in yaml.safe_load_all(subprocess.check_output(command, text=True, stderr=subprocess.PIPE)) if d]
+
+
+def test_mesh_default_is_strict_in_the_root_namespace():
+    pa = of(render_mesh(), 'PeerAuthentication', 'default')
+    assert pa['metadata']['namespace'] == 'istio-system' and 'selector' not in pa['spec']
+    assert pa['spec']['mtls']['mode'] == 'STRICT'
+
+
+def test_authorization_allows_own_namespace_and_starts_as_dry_run():
+    policies = [d for d in render_mesh() if d['kind'] == 'AuthorizationPolicy']
+    assert policies and all(p['metadata']['annotations'] == {'istio.io/dry-run': 'true'} for p in policies)
+    for p in policies:
+        namespace = p['metadata']['namespace']
+        assert namespace != 'istio-system'
+        assert 'selector' not in p['spec'] and p['spec']['action'] == 'ALLOW'
+        assert p['spec']['rules'][0]['from'][0]['source']['namespaces'][0] == namespace
+    enforced = [d for d in render_mesh('--set', 'authorization.dryRun=false') if d['kind'] == 'AuthorizationPolicy']
+    assert all('annotations' not in p['metadata'] for p in enforced)
+
+
+def test_every_listed_namespace_has_its_template():
+    listed = set(yaml.safe_load((MESH / 'values.yaml').read_text())['authorization']['namespaces'])
+    files = {p.stem.removeprefix('authorization-') for p in (MESH / 'templates').glob('authorization-*.yaml')} - {'guard'}
+    assert listed == files
+
+
+def test_authorization_never_lists_the_root_namespace():
+    command = ['helm', 'template', 'm', str(MESH), '-n', 'istio-system', '--set-json',
+               'authorization.namespaces={"istio-system": ["monitoring"]}']
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode != 0 and 'whole mesh' in result.stderr
+
+
+def test_gateway_access_log_only_has_fields_alloy_keeps():
+    telemetry = of(render_mesh(), 'Telemetry', 'edge-access-log')
+    assert telemetry['spec']['selector']['matchLabels'] == {'istio': 'ingressgateway'}
+    istiod = yaml.safe_load((ROOT / 'deploy/minikube/istio/istiod.yaml').read_text())
+    provider = next(p for p in istiod['meshConfig']['extensionProviders'] if p['name'] == 'edge-access-log')
+    labels = provider['envoyFileAccessLog']['logFormat']['labels']
+    # Alloy's allowlist (observability/loki/config.alloy); never a client address, path, query or header.
+    assert set(labels) <= {'event', 'level', 'method', 'status', 'durationMs', 'operation', 'errorCode', 'route',
+                           'dependency', 'outcome', 'errorType', 'logger_name', 'traceId'}
+    assert not any(word in json.dumps(labels) for word in ('PATH', 'REMOTE_ADDRESS', 'X-FORWARDED', 'AUTHORITY'))
+
+
+def test_edge_and_control_plane_survive_one_node():
+    gateway = yaml.safe_load((ROOT / 'deploy/minikube/istio/ingressgateway.yaml').read_text())
+    assert gateway['replicaCount'] >= 2 and gateway['podDisruptionBudget'] == {'minAvailable': 1}
+    istiod = yaml.safe_load((ROOT / 'deploy/minikube/istio/istiod.yaml').read_text())
+    assert istiod['pilot']['replicaCount'] >= 2
+    kiali = yaml.safe_load((ROOT / 'deploy/minikube/istio/kiali.yaml').read_text())
+    assert kiali['deployment']['pod_labels'] == {'sidecar.istio.io/inject': 'true'}   # Prometheus is STRICT

@@ -3,6 +3,10 @@ auth:
   strategy: token # sign in with a ServiceAccount token: this is on a public path (README.md, Kiali)
 deployment:
   view_only_mode: true # the UI can read the mesh but never change it
+  # Meshed although istio-system is not injected (the pod label is enough): it calls Prometheus, which is STRICT
+  # (istio/mesh), and the gateway reaches it over mTLS.
+  pod_labels:
+    sidecar.istio.io/inject: "true"
   resources:
     requests:
       cpu: 10m

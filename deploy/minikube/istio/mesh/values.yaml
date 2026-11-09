@@ -1,0 +1,43 @@
+# Installed by minikube-infrastructure/istio.tf (release istio-mesh, namespace istio-system): policies for the whole
+# mesh. Applications keep their own (jithendar.com minikube/75-mesh.yaml, moks chart mesh-sidecars.yaml,
+# roboshop-ai argocd-minikube/apps/mesh).
+
+# PeerAuthentication istio-system/default: in Istio's root namespace without a selector, so it is the default for every
+# namespace that has no PeerAuthentication of its own. STRICT: a meshed pod accepts only mTLS. Plain-text clients left
+# on mk4, and why they are fine:
+#   - kubelet probes: istiod rewrites them to the sidecar's :15020, which is never captured;
+#   - Prometheus: meshed, scrapes go out through its sidecar as mTLS (observability/prometheus);
+#   - Kiali: meshed by pod label (kiali.yaml), since istio-system itself is not injected;
+#   - the API server calling cert-manager's webhook: that pod has no sidecar (cert-manager values);
+#   - moks-terminals, moks-diagnostics, moks-lab: unmeshed on purpose; they reach the API server and the internet,
+#     and a diagnostic that calls a meshed Service in plain text is refused (moks itself was already STRICT).
+mtls:
+  mode: STRICT
+
+# One ALLOW AuthorizationPolicy per namespace below: only workloads from the listed namespaces (their mTLS identity)
+# may call anything there. A namespace's own pods are always allowed. istio-ingress is the public gateway; monitoring
+# is Prometheus (scrapes) and Grafana. Application namespaces keep theirs in their own repositories.
+# dryRun true: Envoy only counts what it would have refused (stats *.rbac.istio_dry_run_allow_shadow_denied) and lets
+# everything through. Read the counts with scripts/istio/authz-dry-run-report.sh; set false once they stay at 0.
+# Never istio-system: a policy there without a selector applies to the whole mesh.
+authorization:
+  dryRun: true
+  namespaces:
+    argocd: [istio-ingress, monitoring]
+    cert-manager: [monitoring]
+    harbor: [istio-ingress, monitoring]
+    # istio-system: Kiali. moks: its connectors query Prometheus and Loki.
+    monitoring: [istio-ingress, istio-system, moks]
+    # OTLP traces from the applications (roboshop-ai through its ExternalName Service otel-collector); Grafana and
+    # Prometheus from monitoring.
+    observability: [monitoring, jithendar, moks, roboshop-ai]
+
+# The gateway's access log: one JSON line per request on its stdout, collected by Alloy into Loki like any pod's log.
+# The fields are the ones Alloy keeps (observability/loki/config.alloy): no client address, path, query or header ever
+# leaves the gateway. The format is istiod's extension provider of the same name (istiod.yaml, meshConfig).
+accessLog:
+  enabled: true
+  provider: edge-access-log
+  namespace: istio-ingress
+  selector:
+    istio: ingressgateway

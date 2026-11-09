@@ -4,7 +4,7 @@
   python3 scripts/istio/gateway-basic-auth.py [--context mk4] [--dry-run]
 
 The edge chart (deploy/minikube/istio/edge/values.yaml, basicAuth) lists each login and the Secret it comes from: a
-kubernetes.io/basic-auth Secret with keys username and password, the same ones Traefik's middlewares used. Envoy's
+kubernetes.io/basic-auth Secret with keys username and password (the applications' own). Envoy's
 basic_auth filter accepts only {SHA} htpasswd lines, so this writes one per login. A missing source Secret gives a line
 nobody can match (that path stays locked). Then `terraform apply` in minikube-infrastructure/ passes them to the
 gateway. Rerun both after changing a password. Passwords never appear on a command line or in output.

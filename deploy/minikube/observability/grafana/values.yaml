@@ -1,4 +1,4 @@
-# Pinned grafana-community chart; TLS terminates at Traefik.
+# Pinned grafana-community chart; TLS terminates at the Istio gateway.
 fullnameOverride: grafana
 replicas: 1
 deploymentStrategy:

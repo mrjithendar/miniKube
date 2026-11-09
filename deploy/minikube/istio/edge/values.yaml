@@ -26,10 +26,13 @@ gateway:
     - istio-ingress/www.jithendar.com
     - harbor/registry.jithendar.com
     - jfrog/jfrog.jithendar.com
-  # TLS terminated here, then plain TCP (VirtualService tcp routes): PostgreSQL at db.jithendar.com:443.
+  # TLS terminated here, then plain TCP (VirtualService tcp routes): PostgreSQL at db.jithendar.com:443 (the site's
+  # database) and postgres.jithendar.com:443 (the CloudNativePG cluster, deploy/minikube/postgres/access).
   tls:
     - host: jithendar/db.jithendar.com
       # libpq 17+ with sslnegotiation=direct requires the server to select ALPN "postgresql".
+      alpn: [postgresql]
+    - host: postgres-db/postgres.jithendar.com
       alpn: [postgresql]
 
 # The routing table for jithendar.com. First match wins, so a prefix that begins with another one comes first
@@ -55,6 +58,7 @@ root:
     - {name: opensearch, prefix: /opensearch, to: moks/moks-opensearch}
     - {name: roboshop, prefix: /roboshop, to: roboshop-ai/roboshop}
     - {name: db, prefix: /db, to: jithendar/jithendar-db-ui}
+    - {name: postgres, prefix: /postgres, to: postgres-db/postgres-ui}
     - {name: vault-ui, prefix: /ui, to: vault/vault}
     - {name: vault-api, prefix: /v1, to: vault/vault}
   # Everything else.
@@ -83,7 +87,7 @@ readOnly:
     except: /opensearch-dashboards
     postSuffixes: [/_search, /_msearch, /_count]
 
-# Same algorithms, content types and threshold as the Traefik middleware this replaced. Every route on the gateway.
+# Every route on the gateway.
 compression:
   enabled: true
   minContentLength: 1024
@@ -100,22 +104,17 @@ compression:
     - application/manifest+json
     - image/svg+xml
 
-# The PROXY protocol header from the host's HAProxy carries the visitor's address. requireHeader false also accepts
-# connections without it (Traefik's hand-off while it still runs); Terraform sets it true once Traefik is gone.
+# The PROXY protocol header from the host's HAProxy carries the visitor's address. Required: a connection without it
+# is refused, so nobody inside the cluster or on the host can reach the edge with an address of their choosing.
 proxyProtocol:
-  requireHeader: false
+  requireHeader: true
+
+# Never sent to visitors (templates/response-headers.yaml).
+removeResponseHeaders: [x-envoy-upstream-service-time]
 
 # Applications read the first X-Forwarded-For entry. The gateway replaces whatever a client sent with the address it
 # saw itself (the PROXY protocol's), so nobody can choose theirs.
 overwriteForwardedFor: true
-
-# Temporary, while Traefik still runs (Terraform: traefik_enabled). Traefik passes these hosts to the gateway at the
-# lowest priority, so anything without its own Traefik route any more already works through Istio.
-traefikHandoff:
-  enabled: false
-  hosts: [jithendar.com, www.jithendar.com, registry.jithendar.com]
-  # SNI and certificate name Traefik checks on the gateway; the wildcard certificate covers every host.
-  serverName: jithendar.com
 
 # Delegates for add-ons whose upstream charts render only an Ingress (turned off in their values): rendered here, in
 # the add-on's namespace (templates/route-*.yaml). Applications and local charts keep their own (moks, roboshop-ai, jithendar.com, Prometheus,

@@ -19,6 +19,9 @@ only the AppProject `mk-platform` and the opt-in `harbor`.
 | `loki.tf` | `loki` | local `deploy/minikube/observability/loki` (Loki + Alloy) | `monitoring` | `loki.yaml`, `config.alloy` |
 | `otel-collector.tf` | `otel-collector` | local `deploy/minikube/observability/otel-collector` | `observability` | `collector.yaml` |
 | `jaeger.tf` | `jaeger` | local `deploy/minikube/observability/jaeger` | `observability` | `jaeger.yaml` |
+| `local-path.tf` | `local-path-provisioner` | vendored `deploy/minikube/storage/local-path-provisioner` (rancher v0.0.37) | `local-path-storage` | `deploy/minikube/storage/local-path.yaml`; StorageClass `local-path` (node-pinned, Retain, not default) |
+| `postgres.tf` | `cnpg` | cnpg `cloudnative-pg` 0.29.1 (operator 1.30.1) | `cnpg-system` | `deploy/minikube/postgres/operator.yaml` |
+| `postgres.tf` | `postgres-cluster`, `postgres-access` | cnpg `cluster` 0.9.0; local `deploy/minikube/postgres/access` | `postgres-db` | `deploy/minikube/postgres/cluster.yaml` + per-application databases/roles/Secrets from `postgres_databases`; Adminer, TCP route, gateway allowlists (`postgres_allowed_ips`), NetworkPolicies, metrics Service |
 
 `versions.tf` (providers, S3 backend), `variables.tf` (`kubeconfig_path` `~/.kube/config`, `kube_context` `mk4`,
 `helm_timeout` 600 s, `jithendar_com_dir` `../../jithendar.com`, `adopt_existing_traefik` false; `true` in mk4.tfvars), `vars/mk4.tfvars`, `tests/` (`terraform test`
@@ -49,6 +52,70 @@ view only (`deployment.view_only_mode`). Its graph is empty until a namespace ha
 `kubectl --context mk4 label namespace <ns> istio-injection=enabled`, then restart that namespace's Deployments.
 Prometheus scrapes istiod and every sidecar (`istioMetrics` in the Prometheus chart). Namespaces with a NetworkPolicy
 (moks, jithendar) must also admit `monitoring` on port 15090 before their sidecar metrics arrive.
+
+## PostgreSQL (CloudNativePG)
+
+**One PostgreSQL for every application on mk4.** Cluster `postgres-cluster` in namespace `postgres-db`: PostgreSQL 18,
+one primary and two streaming replicas, each on its own node with a 10Gi `local-path` volume pinned to that node, and
+PgBouncer (2 pods, session mode) in front of the primary. The operator promotes a replica if the primary's pod or node
+fails; PgBouncer's address stays the same. The applications' own PostgreSQL pods are to be retired onto it, one at a
+time (below).
+
+**Tenancy** (`postgres.tf`, `postgres_databases` in `vars/mk4.tfvars`): each entry `<name> = { namespace = "<ns>" }` gets
+
+- database `<name>` owned by login role `<name>` (no other application's role can connect to it or read it), at most
+  `connection_limit` connections (default 50; the server allows 300);
+- a random password, kept in the encrypted Terraform state, in Secret `postgres-db/db-<name>` (the operator reads it);
+- Secret `<ns>/postgres-db-credentials` with `host`, `port`, `dbname`, `username`, `password`, `uri` (all through
+  PgBouncer, `postgres-cluster-pooler-rw.postgres-db.svc:5432`) and `direct-host`, `direct-uri` (the primary itself).
+
+Removing an entry drops the role's Secrets and login; the database stays (`databaseReclaimPolicy: retain`) until
+dropped by hand. Listed today: `jithendar`, `moks`, `registry` (Harbor), `shipping` (RoboShop). Their databases are
+empty until each application moves.
+
+| From | Address |
+|---|---|
+| applications | `uri` from `postgres-db-credentials` (PgBouncer); `-rw` (primary), `-ro` (replicas), `-r` (any) for tools |
+| browser | https://jithendar.com/postgres/ (Adminer: System PostgreSQL, server `postgres-cluster-rw`, an application's login) |
+| psql | `psql "host=postgres.jithendar.com port=443 dbname=<name> user=<name> sslmode=verify-full sslrootcert=system sslnegotiation=direct"` (libpq 17+) |
+
+PostgreSQL is not HTTP, so the path `/postgres` can only serve the web client; database clients use the hostname,
+whose TLS the gateway terminates (wildcard certificate, ALPN `postgresql`) before forwarding TCP to the primary. Both
+are refused on the gateway unless the client address is in `postgres_allowed_ips` (`vars/mk4.tfvars`); an empty list
+fails the plan. Passwords: `K="kubectl --context mk4"`;
+`$K -n postgres-db get secret db-<name> -o jsonpath='{.data.password}' | base64 -d`, superuser
+`postgres-cluster-superuser` (user `postgres`).
+
+**First install, in stages:** a plan of `postgres-cluster` fails with `no matches for kind "Cluster"` until the
+operator's CRDs exist. Every namespace in `postgres_databases` must already exist.
+
+```bash
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars -target=helm_release.local_path_provisioner -target=helm_release.cnpg_operator
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars -target=helm_release.postgres_cluster
+$K -n postgres-db get cluster,pooler,database           # "Cluster in healthy state", 3 ready; every Database applied
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars    # edge route + TLS host, access chart, Prometheus job
+```
+
+The hostname needs a DNS record: `postgres.jithendar.com` pointing at the host like `db.jithendar.com`
+(jithendar.com repository, `scripts/cloudflare-dns-record.sh`).
+
+### Moving an application (once each)
+
+1. **Backups first.** The cluster has none yet (`backups.enabled: false`): with every application in it, configure an
+   object store (`backups` in `cluster.yaml`, the S3 bucket and a key with access to one prefix only) before step 4.
+2. Its namespace's NetworkPolicy must allow egress to namespace `postgres-db` on 5432 (moks and jithendar restrict
+   egress). Meshed namespaces need nothing else: `postgres-db` has no sidecars, so Istio sends plain TCP.
+3. Stop writes (scale the application to 0), then copy: `pg_dump -Fc` from the old pod,
+   `pg_restore --no-owner --role=<name> -d <name>` into the new database (PgBouncer or `-rw`). MOKS is on PostgreSQL 17:
+   dump with the 17 client, restore with 18; same commands.
+4. Point the application at `postgres-db-credentials` (its own repository: env from the Secret, or `uri`), start it,
+   check it, then remove its PostgreSQL StatefulSet/Deployment. Keep the old PVC until the next backup has run.
+
+**Not covered:** no backups yet (above); replicas protect against a node failure, not a dropped table. Volumes use
+`Retain`: after deleting the Cluster or a PVC, the PV and its folder (`/var/local-path-provisioner` on that node)
+remain; `$K get pv | grep local-path`, then delete the PV once the data is no longer needed. The 10Gi size is not
+enforced by `local-path`; every volume shares mk4's one disk. A node that is gone keeps its instance Pending; deleting
+that instance's PVC (or `kubectl cnpg destroy`) makes the operator rebuild it on another node from the primary.
 
 ## Wildcard certificate
 

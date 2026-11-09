@@ -1,0 +1,16 @@
+{{- with .Values.accessLog }}
+{{- if .enabled }}
+# Access log for the public gateway only (values.yaml, accessLog). Sidecars log nothing.
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: {{ .provider | quote }}
+  namespace: {{ .namespace | quote }}
+spec:
+  selector:
+    matchLabels: {{ toYaml .selector | nindent 6 }}
+  accessLogging:
+    - providers:
+        - name: {{ .provider | quote }}
+{{- end }}
+{{- end }}

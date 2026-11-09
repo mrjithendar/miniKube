@@ -1,23 +1,29 @@
-# Dependabot version updates for the mk4 manifests and workflows. Merging an image bump changes nothing until the
-# Argo CD Application is synced or minikube-infrastructure/ is applied.
+# Dependabot version updates for the mk4 manifests, local charts, Terraform providers and workflows.
+# Merging is a deploy: Argo CD auto-syncs deploy/minikube (selfHeal), and create-mk-infrastructure.yml applies
+# minikube-infrastructure/ (which installs the local observability charts) on pushes to master.
 #
 # Minor and patch updates are grouped to keep the PR count down; majors arrive one PR each.
 # Security updates are not grouped and are not held back by the cooldown.
 #
-# Not covered, because Dependabot cannot read them; bump these by hand: Helm chart versions in deploy/minikube/applications/*.yaml,
-# minikube-infrastructure/*.tf, scripts/argocd/ and deploy/minikube/deploy-*.sh, terraform_version in the workflows,
-# and the Vault image (deploy/minikube/vault/values.yaml has no Chart.yaml, and tests/test_vault_chart.py pins it).
+# Stateful images (postgres, valkey) restart their StatefulSet when merged. mk4's hostpath PVs have no
+# nodeAffinity, so a pod that lands on another node starts on an empty volume: check the node before merging.
+#
+# Not covered, because Dependabot cannot read them; bump these by hand: Helm chart versions in
+# deploy/minikube/applications/*.yaml and the helm_release blocks in minikube-infrastructure/*.tf, scripts/argocd/ and
+# deploy/minikube/deploy-*.sh, terraform_version in the workflows, the Harbor images (custom tags in
+# deploy/minikube/harbor/values.yaml, built by build-harbor-images.yml), and the Vault image
+# (deploy/minikube/vault/values.yaml has no Chart.yaml, and tests/test_vault_chart.py pins it).
 # Host tool versions are in the tools repository (scripts/setup/versions.json).
 
 version: 2
 
 updates:
-  # Images in the Kubernetes manifests. deploy/minikube/observability/jaeger and deploy/minikube/observability/otel-collector are left
-  # out: no Argo CD Application deploys them.
+  # Plain Kubernetes manifests (Dependabot reads image: lines in each directory, not its subdirectories)
   - package-ecosystem: docker
     directories:
       - /deploy/minikube/ecr-refresh
-      - /deploy/minikube/observability/loki
+      - /deploy/minikube/harbor/manifests
+      - /deploy/minikube/harbor/examples
     schedule:
       interval: weekly
       day: monday
@@ -31,13 +37,24 @@ updates:
       images-minor-patch:
         update-types: [minor, patch]
     ignore:
-      # MongoDB feature versions upgrade one step at a time and change the on-disk format.
-      - dependency-name: mongo
+      # Major PostgreSQL upgrades need pg_upgrade or a dump/restore of the data volume.
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+      # Harbor's cache: take a Valkey major deliberately, not in a routine bump.
+      - dependency-name: valkey/valkey
+        update-types: ["version-update:semver-major"]
+      # The ECR refresh job already runs the newest Python (3.15); move minors by hand.
+      - dependency-name: python
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
-  # Images in the local Prometheus chart values (prometheus, busybox)
+  # Local charts installed by minikube-infrastructure/ (images in each chart's values.yaml). The image strings live in
+  # values.yaml rather than templates/ because Dependabot cannot parse templated YAML.
   - package-ecosystem: helm
-    directory: /deploy/minikube/observability/prometheus
+    directories:
+      - /deploy/minikube/observability/prometheus
+      - /deploy/minikube/observability/loki
+      - /deploy/minikube/observability/jaeger
+      - /deploy/minikube/observability/otel-collector
     schedule:
       interval: weekly
       day: monday
@@ -49,6 +66,22 @@ updates:
       prefix: "deps(helm)"
     groups:
       helm-minor-patch:
+        update-types: [minor, patch]
+
+  # Providers (helm, kubernetes, random) in minikube-infrastructure/ + .terraform.lock.hcl. Not the chart versions.
+  - package-ecosystem: terraform
+    directory: /minikube-infrastructure
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "deps(terraform)"
+    groups:
+      providers-minor-patch:
         update-types: [minor, patch]
 
   # Actions in .github/workflows (pinned by commit SHA; Dependabot updates the SHA and the comment)

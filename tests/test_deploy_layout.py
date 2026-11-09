@@ -90,9 +90,11 @@ def test_minikube_issuers_solve_dns01_for_the_wildcard():
     assert certificate['spec']['issuerRef']['name'] == 'letsencrypt-dns'
 
 
-def test_only_terraform_installs_traefik():
-    # minikube-infrastructure/traefik.tf owns the release; a second installer would fight it over revisions and values.
-    assert not (ROOT / 'deploy-traefik.sh').exists() and not (MINIKUBE / 'deploy-traefik.sh').exists()
-    for path in [*ROOT.joinpath('scripts').rglob('*.py'), *ROOT.glob('*.sh'), *MINIKUBE.rglob('*.sh')]:
+def test_traefik_is_gone():
+    # The Istio gateway is mk4's only edge (2026-11-09); nothing may install Traefik again or route through it.
+    assert not (ROOT / 'minikube-infrastructure/traefik.tf').exists() and not (MINIKUBE / 'traefik').exists()
+    assert not (MINIKUBE / 'namespaces/traefik.yaml').exists()
+    for path in [*ROOT.joinpath('scripts').rglob('*.py'), *ROOT.glob('*.sh'), *MINIKUBE.rglob('*.sh'),
+                 *MINIKUBE.rglob('*.yaml'), *ROOT.joinpath('minikube-infrastructure').glob('*.tf')]:
         text = path.read_text()
-        assert not re.search(r"helm[^\n]*(install|upgrade)[^\n]*traefik|'traefik', 'https://traefik\.github\.io/charts'", text), path
+        assert not re.search(r"helm[^\n]*(install|upgrade)[^\n]*traefik|traefik\.github\.io/charts|apiVersion: traefik\.io/", text), path

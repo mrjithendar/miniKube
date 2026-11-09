@@ -50,8 +50,7 @@ Client → Cloudflare DNS (**DNS only**) → host HAProxy (TCP, PROXY protocol, 
   at 100 MB on Cloudflare's Free and Pro plans, and Docker sends each layer as one request. Keep the new record
   grey-clouded.
 - **No route timeout.** The VirtualService sets none, which is Istio's "no deadline": a 1 GB layer at 10 MB/s takes
-  100 s, and Envoy streams the body instead of reading it whole. While Traefik is still in front, its 900s read timeout
-  (`../traefik/values.yaml`) applies too.
+  100 s, and Envoy streams the body instead of reading it whole.
 - **No body-size limit.** Envoy streams request bodies; nothing on the route buffers them.
 - **Redirects.** With filesystem storage the registry serves blobs itself; nothing redirects to object storage.
   The token realm is `externalURL`, so clients fetch tokens from `https://registry.jithendar.com/service/token`.
@@ -84,10 +83,7 @@ Each is a setting this repository did not have before.
 
 1. **DNS.** In Cloudflare, an A record `registry.jithendar.com → 46.224.38.14`, **DNS only**. No AAAA record
    (jithendar.com has none). cert-manager's HTTP-01 challenge needs it before the first sync.
-2. **Traefik timeout.** `terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars` applies
-   `../traefik/values.yaml`. Its first run imports the live release `traefik/traefik` (revision 2, `failed`:
-   context canceled on 2026-11-04) and upgrades it in place; see [../traefik/README.md](../traefik/README.md).
-3. **Docker Hub.** Two access tokens: one with write access to `jithendar/custom-harbour` for the build, and a
+2. **Docker Hub.** Two access tokens: one with write access to `jithendar/custom-harbour` for the build, and a
    read-only one for mk4 to pull with. `deploy-harbor.sh` asks for the read-only one once and stores it as
    `harbor/dockerhub-pull`.
 4. **Build machine.** A native arm64 Docker host with the Compose plugin that is **not** the mk4 server (the script

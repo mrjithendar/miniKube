@@ -1,0 +1,9 @@
+# The mesh's default (values.yaml, mtls): Istio's root namespace, no selector.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-system   # Istio's root namespace: no selector means the whole mesh
+spec:
+  mtls:
+    mode: {{ .Values.mtls.mode | quote }}

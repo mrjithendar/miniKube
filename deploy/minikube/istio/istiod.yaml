@@ -1,9 +1,16 @@
 # Values for istio-release istiod 1.30.7 (minikube-infrastructure/istio.tf). Same mesh settings as EKS
-# (tools repository: deploy/eks/helm-values/istiod.yaml). One replica: moks and jithendar are labelled istio-injection=enabled,
-# so while istiod restarts, new pods there wait for the fail-closed injection webhook.
+# (tools repository: deploy/eks/helm-values/istiod.yaml). Two replicas on different nodes, with the chart's
+# PodDisruptionBudget (rendered for replicaCount > 1): the injection webhook fails closed, so with istiod down no pod in
+# an injected namespace could start, and sidecars could not renew certificates.
 pilot:
   autoscaleEnabled: false
-  replicaCount: 1
+  replicaCount: 2
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels: {app: istiod}
   resources:
     requests:
       cpu: 100m
@@ -36,3 +43,20 @@ meshConfig:
     attempts: 0
   defaultConfig:
     holdApplicationUntilProxyStarts: true
+  # Turned on per workload by a Telemetry resource (istio/mesh: the public gateway only). JSON with exactly the fields
+  # Alloy keeps (observability/loki/config.alloy): no client address, path, query or header.
+  extensionProviders:
+    - name: edge-access-log
+      envoyFileAccessLog:
+        path: /dev/stdout
+        logFormat:
+          labels:
+            event: edge_request
+            level: info
+            method: "%REQ(:METHOD)%"
+            status: "%RESPONSE_CODE%"
+            durationMs: "%DURATION%"
+            # Route name in the routing table (site, moks, grafana, ...), never the path.
+            operation: "%ROUTE_NAME%"
+            # Envoy's response flags (UH no healthy upstream, NR no route, ...); "-" when none, which Alloy drops.
+            errorCode: "%RESPONSE_FLAGS%"

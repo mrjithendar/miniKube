@@ -44,6 +44,18 @@ extraScrapeConfigs:
     relabel_configs:
       - target_label: service
         replacement: moks
+  # CloudNativePG cluster (namespace postgres-db): every instance's exporter through the headless Service
+  # postgres-cluster-metrics (deploy/minikube/postgres/access). cnpg_pg_replication_lag and cnpg_collector_up are the
+  # ones to watch. The access chart's NetworkPolicy admits monitoring on 9187.
+  - job_name: postgres
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names: ["postgres-cluster-metrics.postgres-db.svc.cluster.local"]
+        type: A
+        port: 9187
+    relabel_configs:
+      - target_label: service
+        replacement: postgres-cluster
   - job_name: loki
     static_configs:
       - targets: ["loki.monitoring.svc.cluster.local:3100"]

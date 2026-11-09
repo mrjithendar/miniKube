@@ -1,0 +1,14 @@
+# The ingress gateway's connections to pgAdmin. gunicorn closes an idle keep-alive connection after 2 s; Envoy would
+# keep it for an hour and sometimes send the next request into a socket gunicorn just closed (503, flag UC). Closing
+# idle connections first on the gateway side avoids that.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: postgres-ui
+  namespace: {{ .Release.Namespace }}
+spec:
+  host: {{ printf "postgres-ui.%s.svc.cluster.local" .Release.Namespace }}
+  trafficPolicy:
+    connectionPool:
+      http:
+        idleTimeout: 1s

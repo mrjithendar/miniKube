@@ -26,7 +26,9 @@ spec:
             # pgAdmin frames its own pages (SAMEORIGIN) and sets its own Cache-Control (its JavaScript is large).
             X-Frame-Options: SAMEORIGIN
             X-Content-Type-Options: nosniff
-            Referrer-Policy: no-referrer
+            # Not no-referrer: pgAdmin's CSRF check over HTTPS (Flask-WTF strict SSL) rejects requests without a
+            # same-origin Referer, and every API call would get 401 (a blank page after login).
+            Referrer-Policy: same-origin
       route:
         - destination:
             host: {{ printf "postgres-ui.%s.svc.cluster.local" .Release.Namespace }}

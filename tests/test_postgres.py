@@ -102,3 +102,7 @@ def test_ui_is_pgadmin_under_the_prefix_with_its_state_kept():
     assert {'name': 'data', 'persistentVolumeClaim': {'claimName': 'postgres-ui-data'}} in pod['volumes']
     route = of(docs, 'VirtualService', 'postgres-ui')['spec']['http'][1]
     assert route['headers']['response']['set']['X-Frame-Options'] == 'SAMEORIGIN'
+    # pgAdmin's CSRF check needs a same-origin Referer over HTTPS (no-referrer: 401 on every API call, blank page)
+    assert route['headers']['response']['set']['Referrer-Policy'] == 'same-origin'
+    dr = of(docs, 'DestinationRule', 'postgres-ui')['spec']
+    assert dr['trafficPolicy']['connectionPool']['http']['idleTimeout'] == '1s'

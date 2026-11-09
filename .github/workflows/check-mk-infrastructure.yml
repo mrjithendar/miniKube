@@ -65,7 +65,14 @@ jobs:
       - name: helm lint & template (local charts)
         run: |
           set -euo pipefail
-          for chart in cert-manager/issuers istio/edge observability/prometheus observability/loki observability/jaeger \
+          # The edge chart refuses to render without a login per basicAuth entry (Terraform passes the real ones from
+          # Secrets on mk4); give it placeholders derived from its own list so a new entry cannot break this check.
+          names=$(sed -nE '/^basicAuth:/,/^[^ -]/s/^  - \{name: ([a-z0-9-]+),.*/\1/p' deploy/minikube/istio/edge/values.yaml)
+          [[ -n "$names" ]] || { echo "::error::no basicAuth names found in deploy/minikube/istio/edge/values.yaml"; exit 1; }
+          { echo 'basicAuthUsers:'; for n in $names; do echo "  $n: \"ci:{SHA}AAAAAAAAAAAAAAAAAAAAAAAAAAA=\""; done; } > "$RUNNER_TEMP/edge-ci.yaml"
+          helm lint deploy/minikube/istio/edge -f "$RUNNER_TEMP/edge-ci.yaml"
+          helm template check deploy/minikube/istio/edge -f "$RUNNER_TEMP/edge-ci.yaml" > /dev/null
+          for chart in cert-manager/issuers observability/prometheus observability/loki observability/jaeger \
                        observability/otel-collector observability/grafana/dashboards; do
             helm lint "deploy/minikube/$chart"
             helm template check "deploy/minikube/$chart" > /dev/null

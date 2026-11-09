@@ -136,6 +136,22 @@ jobs:
       - name: terraform test
         run: terraform -chdir=minikube-infrastructure test -no-color -var-file=vars/mk4.tfvars
 
+      # A plan of helm_release.postgres_cluster dry-runs its Cluster/Database objects and fails with
+      # 'no matches for kind "Cluster"' until the CloudNativePG CRDs exist (README.md, "First install, in stages").
+      # Install the operator (and the local-path class its volumes use) on its own first; a no-op once the CRD is there.
+      - name: Bootstrap CloudNativePG CRDs
+        if: ${{ !inputs.plan_only }}
+        run: |
+          set -euo pipefail
+          if kubectl --request-timeout=20s get crd clusters.postgresql.cnpg.io -o name >/dev/null 2>&1; then
+            echo "CloudNativePG CRDs present"; exit 0
+          fi
+          echo "::notice::CloudNativePG CRDs missing: applying the operator first"
+          terraform -chdir=minikube-infrastructure apply -input=false -no-color -auto-approve -lock-timeout=5m \
+            -var-file=vars/mk4.tfvars -target=helm_release.local_path_provisioner -target=helm_release.cnpg_operator
+          kubectl --request-timeout=20s wait --for=condition=Established --timeout=120s \
+            crd/clusters.postgresql.cnpg.io crd/databases.postgresql.cnpg.io crd/poolers.postgresql.cnpg.io
+
       - name: terraform plan
         run: |
           set -euo pipefail

@@ -116,9 +116,12 @@ resource "kubernetes_secret_v1" "postgres_app" {
 # minutes on first install):
 #   kubectl --context mk4 -n postgres-db get cluster,database,pooler
 resource "helm_release" "postgres_cluster" {
-  name       = local.postgres_cluster
-  namespace  = kubernetes_namespace_v1.postgres_db.metadata[0].name
-  repository = "https://cloudnative-pg.github.io/charts"
+  name      = local.postgres_cluster
+  namespace = kubernetes_namespace_v1.postgres_db.metadata[0].name
+  # From GHCR, not https://cloudnative-pg.github.io/charts: that index points at a GitHub release asset
+  # (releases/download/cluster-v0.9.0/cluster-0.9.0.tgz) that answered 504 on every request on 2026-11-09. The OCI
+  # copy is the same file (sha256 95b23ee4b7e2b24d7aec03a9b6a7b751ce42c7447f1299a34460764a43a8f030, the index's digest).
+  repository = "oci://ghcr.io/cloudnative-pg/charts"
   chart      = "cluster"
   version    = "0.9.0"
   values = [

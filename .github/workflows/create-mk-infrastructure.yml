@@ -138,17 +138,23 @@ jobs:
 
       # A plan of helm_release.postgres_cluster dry-runs its Cluster/Database objects and fails with
       # 'no matches for kind "Cluster"' until the CloudNativePG CRDs exist (README.md, "First install, in stages").
-      # Install the operator (and the local-path class its volumes use) on its own first; a no-op once the CRD is there.
+      # Install the operator (and the local-path class its volumes use) on its own first.
+      # Also create namespace postgres-db up front: with experiments.manifest the helm provider leaves a new release's
+      # objects in a not-yet-existing namespace out of the plan, then fails the apply with "Provider produced
+      # inconsistent result ... new element has appeared" (hit 2026-11-09 for cnpg-system and local-path-storage).
+      # A no-op once the CRD and the namespace exist.
       - name: Bootstrap CloudNativePG CRDs
         if: ${{ !inputs.plan_only }}
         run: |
           set -euo pipefail
-          if kubectl --request-timeout=20s get crd clusters.postgresql.cnpg.io -o name >/dev/null 2>&1; then
-            echo "CloudNativePG CRDs present"; exit 0
+          if kubectl --request-timeout=20s get crd clusters.postgresql.cnpg.io -o name >/dev/null 2>&1 \
+             && kubectl --request-timeout=20s get namespace postgres-db -o name >/dev/null 2>&1; then
+            echo "CloudNativePG CRDs and namespace postgres-db present"; exit 0
           fi
-          echo "::notice::CloudNativePG CRDs missing: applying the operator first"
+          echo "::notice::CloudNativePG CRDs or namespace postgres-db missing: applying them first"
           terraform -chdir=minikube-infrastructure apply -input=false -no-color -auto-approve -lock-timeout=5m \
-            -var-file=vars/mk4.tfvars -target=helm_release.local_path_provisioner -target=helm_release.cnpg_operator
+            -var-file=vars/mk4.tfvars -target=helm_release.local_path_provisioner -target=helm_release.cnpg_operator \
+            -target=kubernetes_namespace_v1.postgres_db
           kubectl --request-timeout=20s wait --for=condition=Established --timeout=120s \
             crd/clusters.postgresql.cnpg.io crd/databases.postgresql.cnpg.io crd/poolers.postgresql.cnpg.io
 

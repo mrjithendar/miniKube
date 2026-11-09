@@ -12,4 +12,5 @@ resources:
 - harbor-redis-service.yaml
 - harbor-redis-statefulset.yaml
 - harbor-virtualservice.yaml
+- harbor-registry-peerauthentication.yaml
 - harbor-backup-cronjob.yaml

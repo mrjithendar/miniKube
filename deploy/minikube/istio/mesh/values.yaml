@@ -10,7 +10,10 @@
 #   - Kiali: meshed by pod label (kiali.yaml), since istio-system itself is not injected;
 #   - the API server calling cert-manager's webhook: that pod has no sidecar (cert-manager values);
 #   - moks-terminals, moks-diagnostics, moks-lab: unmeshed on purpose; they reach the API server and the internet,
-#     and a diagnostic that calls a meshed Service in plain text is refused (moks itself was already STRICT).
+#     and a diagnostic that calls a meshed Service in plain text is refused (moks itself was already STRICT);
+#   - harbor-core proxying /v2/ to the registry: it keeps Host registry.jithendar.com, so its sidecar falls back to
+#     PassthroughCluster in plain text; the registry's port 5000 is PERMISSIVE for it
+#     (harbor/manifests/harbor-registry-peerauthentication.yaml). Without that every image pull is a 503.
 mtls:
   mode: STRICT
 

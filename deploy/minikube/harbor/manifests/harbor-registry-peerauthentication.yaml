@@ -1,0 +1,24 @@
+# The registry container's port 5000 accepts plain text as well as mTLS; the rest of the pod stays STRICT.
+# Why: harbor-core proxies every authenticated /v2/ request (image pulls and pushes) to http://harbor-registry:5000 but
+# keeps the client's Host header, registry.jithendar.com. Core's sidecar has no route for that host on port 5000, so it
+# sends the request through PassthroughCluster straight to the pod IP in plain text. Under the mesh-wide STRICT default
+# (istio/mesh values.yaml, mtls) the registry's sidecar resets it and every pull fails with
+# "503 ... upstream connect error ... connection termination" (2026-11-09).
+# Only pods inside the cluster can reach the pod IP; the registry still checks Harbor's bearer token on every request.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: harbor-registry
+  namespace: harbor
+  labels:
+    app.kubernetes.io/part-of: harbor
+spec:
+  selector:
+    matchLabels:
+      app: harbor
+      component: registry
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    "5000":
+      mode: PERMISSIVE

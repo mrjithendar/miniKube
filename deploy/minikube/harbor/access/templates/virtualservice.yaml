@@ -6,9 +6,9 @@ apiVersion: networking.istio.io/v1
 kind: VirtualService
 metadata:
   name: harbor
-  namespace: harbor
+  namespace: {{ .Release.Namespace }}
 spec:
-  hosts: [registry.jithendar.com]
+  hosts: [{{ .Values.host | quote }}]
   gateways: [istio-ingress/public]
   http:
   - name: core
@@ -19,10 +19,10 @@ spec:
     - uri: {prefix: /c/}
     route:
     - destination:
-        host: harbor-core.harbor.svc.cluster.local
+        host: harbor-core.{{ .Release.Namespace }}.svc.cluster.local
         port: {number: 80}
   - name: portal
     route:
     - destination:
-        host: harbor-portal.harbor.svc.cluster.local
+        host: harbor-portal.{{ .Release.Namespace }}.svc.cluster.local
         port: {number: 80}

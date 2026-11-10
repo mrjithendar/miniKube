@@ -138,7 +138,7 @@ resource "kubernetes_secret_v1" "redis_ui_auth" {
   }
 }
 
-# StatefulSet valkey (3 pods: Valkey, Sentinel, HAProxy, exporter, Istio proxy), Services, PodDisruptionBudget.
+# StatefulSet valkey (2 pods, one per worker: Valkey, Sentinel, HAProxy, exporter, Istio proxy), Services, PodDisruptionBudget.
 # The chart pulls from Docker Hub's OCI registry; a local docker credsStore that is not installed breaks the pull
 # (README.md, Commands: DOCKER_CONFIG).
 resource "helm_release" "redis" {

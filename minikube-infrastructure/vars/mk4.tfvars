@@ -15,7 +15,7 @@ redis_allowed_ips = ["122.177.247.138/32"]
 postgres_databases = {
   jithendar = { namespace = "jithendar" }   # jithendar.com site; today jithendar/jithendar-postgres-0 (PG 18)
   moks      = { namespace = "moks" }        # MOKS portal; today moks/moks-postgres-0 (PG 17: dump and restore)
-  registry  = { namespace = "harbor" }      # Harbor core; today harbor/harbor-postgres-0 (PG 18), database "registry"
+  registry  = { namespace = "harbor" }      # Harbor (harbor.tf): core and jobservice, database "registry"
   shipping  = { namespace = "roboshop-ai" } # RoboShop shipping; today roboshop-ai/shipping-db (PG 18)
 }
 

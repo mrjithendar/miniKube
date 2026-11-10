@@ -1,0 +1,13 @@
+# Release harbor-access, namespace harbor (minikube-infrastructure/harbor.tf), installed before the Harbor chart: core
+# mounts the two certificates' Secrets. jithendar.com/harbor redirects to the portal (deploy/minikube/istio/edge).
+
+# Must match externalURL in ../values.yaml and the gateway's https host harbor/registry.jithendar.com (edge values).
+host: registry.jithendar.com
+
+# The shared PostgreSQL tenant (postgres_databases "registry" in vars/mk4.tfvars): Terraform writes this Secret here.
+databaseSecret: postgres-db-credentials
+
+backup:
+  # Off until Secret harbor/harbor-backup-r2 exists (bucket, endpoint, access-key-id, secret-access-key).
+  suspend: true
+  schedule: '30 2 * * *'

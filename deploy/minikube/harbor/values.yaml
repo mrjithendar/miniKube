@@ -1,14 +1,15 @@
-# Harbor on mk4: official chart harbor/harbor 1.19.4 (Harbor v2.15.4), pinned in ../applications/optional/harbor.yaml.
+# Harbor on mk4: official chart harbor/harbor 1.19.4 (Harbor v2.15.4), release harbor in namespace harbor, installed by
+# Terraform (minikube-infrastructure/harbor.tf) after ./access (release harbor-access: certificates, route, backup).
 # Every key below was checked against that chart version's values.yaml and templates. README.md explains the choices.
 #
-# Settings this repository did not already establish, and so are deployment prerequisites (README.md "Prerequisites"):
-# - the registry hostname (DNS A record) and the private Docker Hub repository holding the arm64 Harbor images;
-# - the node that holds Harbor's volumes (nodeSelector below);
-# - the Secret harbor/harbor-credentials (./create-secrets.sh --services harbor --apply).
+# Portal https://registry.jithendar.com/harbor/; https://jithendar.com/harbor redirects there (edge routing table).
+# Deployment prerequisites (README.md "Prerequisites"; harbor.tf refuses to plan without the two Secrets):
+# - the registry hostname's DNS record and the private Docker Hub repository holding the arm64 Harbor images;
+# - Secret harbor/harbor-credentials (./create-secrets.sh --services harbor --apply);
+# - Secret harbor/dockerhub-pull (deploy-harbor.sh --skip-build creates it from a read-only Docker Hub token).
 #
-# To change the hostname, change externalURL here and the hostnames in manifests/harbor-public-certificate.yaml,
-# manifests/harbor-virtualservice.yaml and miniKube's deploy/minikube/istio/edge/values.yaml (gateway.https, the
-# /harbor redirect).
+# To change the hostname, change externalURL here, host in access/values.yaml and deploy/minikube/istio/edge/values.yaml
+# (gateway.https, the /harbor redirect).
 
 externalURL: https://registry.jithendar.com
 
@@ -35,7 +36,7 @@ caSecretName: harbor-public-tls
 imagePullSecrets:
 - name: dockerhub-pull
 
-# Harbor has no multi-node mode here: one replica of everything, on the node that holds the volumes.
+# One replica of everything. Each local-path volume keeps its pod on the worker that holds it.
 updateStrategy:
   type: Recreate
 
@@ -44,13 +45,11 @@ persistence:
   resourcePolicy: keep
   persistentVolumeClaim:
     registry:
-      storageClass: standard
+      storageClass: local-path
       accessMode: ReadWriteOnce
-      # minikube-hostpath does not enforce sizes: blobs share the host disk with every node, volume and image.
-      # That disk had 43 GiB free on 2026-11-06 (README.md "Footprint"); retention and GC keep this bounded.
+      # local-path does not enforce sizes: blobs share the worker's disk with every other volume and image there.
+      # Retention and GC keep this bounded (README.md "Footprint").
       size: 30Gi
-      annotations:
-        argocd.argoproj.io/sync-options: Prune=false,Delete=false
   imageChartStorage:
     type: filesystem
     # Filesystem storage has no redirects to disable; blobs are served by the registry itself.
@@ -58,8 +57,8 @@ persistence:
     filesystem:
       rootdirectory: /storage
 
-# Credentials come from harbor/harbor-credentials (create_secrets.py). Argo CD renders the chart without cluster
-# access, so any value the chart would otherwise generate (randAlphaNum, genCA) would change on every sync.
+# Credentials come from harbor/harbor-credentials (create_secrets.py): any value the chart would otherwise generate
+# (randAlphaNum, genCA) would change on every upgrade.
 existingSecretAdminPassword: harbor-credentials
 existingSecretAdminPasswordKey: HARBOR_ADMIN_PASSWORD
 existingSecretSecretKey: harbor-credentials
@@ -71,22 +70,26 @@ ipFamily:
   ipv6:
     enabled: false
 
-# The database runs beside the chart (manifests/harbor-postgres-*); Redis is mk4's shared Valkey in namespace redis
-# (minikube-infrastructure/redis.tf, tenant "harbor": ACL user harbor, databases 2-5, Secret redis-harbor-credentials
-# written into this namespace by Terraform). The chart's internal database takes its password only from values, and
-# its internal Redis has no password; neither can be kept out of Git.
+# The database is mk4's shared PostgreSQL (minikube-infrastructure/postgres.tf, tenant "registry": database and owner
+# role registry, Secret postgres-db-credentials written into this namespace by Terraform); Redis is the shared Valkey
+# (redis.tf, tenant "harbor": ACL user harbor, databases 2-5, Secret redis-harbor-credentials). The chart's internal
+# database takes its password only from values, and its internal Redis has no password.
 database:
   type: external
   external:
-    host: harbor-postgres
+    # PgBouncer (session mode) in front of the current primary: one address across failovers.
+    host: postgres-cluster-pooler-rw.postgres-db.svc.cluster.local
     port: '5432'
-    username: harbor
+    username: registry
     coreDatabase: registry
     # Key "password".
-    existingSecret: harbor-credentials
-    sslmode: disable
-  maxIdleConns: 20
-  maxOpenConns: 50
+    existingSecret: postgres-db-credentials
+    # PgBouncer offers TLS (client_tls_sslmode prefer). postgres-db has no Istio sidecars, so this TLS is the only
+    # encryption on the way.
+    sslmode: require
+  # Core and jobservice each keep a pool; together they stay under the role's connection_limit (50, postgres.tf).
+  maxIdleConns: 10
+  maxOpenConns: 20
 
 redis:
   type: external
@@ -99,8 +102,8 @@ redis:
     jobserviceDatabaseIndex: '3'
     registryDatabaseIndex: '4'
     trivyAdapterIndex: '5'
-    # Not existingSecret: the chart reads that with Helm lookup, which returns nothing under Argo CD and leaves
-    # the password out of every URL. Each component instead gets REDIS_PASSWORD from redis-harbor-credentials and
+    # Not existingSecret: the chart reads that with Helm lookup at render time, so a new password would reach
+    # the URLs only on the next upgrade. Each component instead gets REDIS_PASSWORD from redis-harbor-credentials and
     # the URLs below are rebuilt with it ($(VAR) expansion; env takes precedence over the chart's envFrom ConfigMaps).
     password: ''
 
@@ -112,8 +115,6 @@ portal:
   resources:
     requests: {cpu: 10m, memory: 32Mi}
     limits: {cpu: 200m, memory: 128Mi}
-  nodeSelector:
-    kubernetes.io/hostname: mk4-m05
 
 core:
   image:
@@ -129,8 +130,6 @@ core:
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: '1', memory: 512Mi}
-  nodeSelector:
-    kubernetes.io/hostname: mk4-m05
   extraEnvVars:
   - name: REDIS_PASSWORD
     valueFrom:
@@ -155,8 +154,6 @@ jobservice:
   resources:
     requests: {cpu: 50m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
-  nodeSelector:
-    kubernetes.io/hostname: mk4-m05
   extraEnvVars:
   - name: REDIS_PASSWORD
     valueFrom:
@@ -169,8 +166,8 @@ jobservice:
 
 registry:
   replicas: 1
-  # minikube's hostpath volumes are root-owned and ignore the chart's fsGroup 10000, so the registry could not
-  # write /storage. Hand the volume over once, as root with only CAP_CHOWN (busybox: also used in README.md).
+  # Hand the volume to the registry user once, as root with only CAP_CHOWN: hostPath-style volumes (local-path) ignore
+  # the chart's fsGroup 10000.
   initContainers:
   - name: chown-storage
     image: busybox:1.37
@@ -227,8 +224,6 @@ registry:
     - name: REGISTRY_REDIS_PASSWORD
       valueFrom:
         secretKeyRef: {name: redis-harbor-credentials, key: password}
-  nodeSelector:
-    kubernetes.io/hostname: mk4-m05
 
 # Off by default to save memory (about 1 GiB with its vulnerability database). See README.md "Trivy".
 trivy:
@@ -241,8 +236,6 @@ trivy:
   resources:
     requests: {cpu: 200m, memory: 512Mi}
     limits: {cpu: '1', memory: 1Gi}
-  nodeSelector:
-    kubernetes.io/hostname: mk4-m05
 
 # The exporter image hard-codes GOARCH=amd64 (make/photon/exporter/Dockerfile), so it cannot run here.
 metrics:

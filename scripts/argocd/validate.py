@@ -95,11 +95,7 @@ def validate(external=False):
             cluster_kind=kind in ('Namespace','ClusterRole','ClusterRoleBinding','CustomResourceDefinition','APIService','ClusterIssuer','MutatingWebhookConfiguration','ValidatingWebhookConfiguration')
             if not namespace and not cluster_kind:namespace=spec['destination']['namespace']
             assert namespace not in ('argocd','traefik'),(name,kind,meta['name'])
-            if kind=='Secret' and name=='harbor':
-                # The chart always renders these; with every credential in harbor-credentials they hold no values.
-                assert meta['name'] in ('harbor-core','harbor-jobservice','harbor-registry','harbor-registryctl'),meta['name']
-                assert not resource.get('stringData') and not any((resource.get('data') or {}).values()),f'harbor: Secret/{meta["name"]} carries a value: move it to harbor-credentials'
-            elif kind=='Secret':
+            if kind=='Secret':
                 assert name=='jfrog' and meta['name']=='jfrog-artifactory-unified-secret',f'{name} renders a credential Secret: provision credentials externally'
                 assert set(resource.get('stringData',{}))=={'access.config.patch.yml','binarystore.xml','system.yaml'}
                 assert not resource.get('data')

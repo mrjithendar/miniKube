@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Build Harbor's images for arm64, push them to a private Docker Hub repository, and deploy Harbor on mk4 through
-# its Argo CD Application. README.md lists what must exist first (DNS, Docker Hub tokens).
+# Build Harbor's images for arm64, push them to a private Docker Hub repository, and deploy Harbor on mk4 with
+# Terraform (minikube-infrastructure/harbor.tf). README.md lists what must exist first (DNS, Docker Hub tokens).
 #
 #   1. build  Harbor's own Makefile on the pinned tag, on a native arm64 Docker host that is not the mk4 server
 #             (image builds there froze the cluster twice: runner/README.md in the tools repository). An Apple Silicon Mac works, and
 #             .github/workflows/build-harbor-images.yml runs this step on GitHub's arm64 runner.
 #   2. push   docker push jithendar/custom-harbour:<component>-v2.15.4 (run "docker login" first)
-#   3. deploy create-secrets.sh (harbor-credentials), Secret dockerhub-pull, then scripts/argocd/deploy.py harbor
+#   3. deploy create-secrets.sh (harbor-credentials), Secret dockerhub-pull, then terraform apply (asks to confirm)
 #
-# Usage: bash deploy/minikube/harbor/deploy-harbor.sh [--skip-build] [--skip-deploy] [--with-trivy] [--skip-git-check]
+# Usage: bash deploy/minikube/harbor/deploy-harbor.sh [--skip-build] [--skip-deploy] [--with-trivy]
 # Env:   IMAGE_REPO (jithendar/custom-harbour), KUBE_CONTEXT (mk4),
 #        DOCKERHUB_USERNAME / DOCKERHUB_TOKEN for the pull Secret (prompted if unset; a read-only access token is enough)
 set -euo pipefail
@@ -20,7 +20,7 @@ TRIVY_VERSION=v0.75.0                                     # TRIVYVERSION in that
 IMAGE_REPO="${IMAGE_REPO:-jithendar/custom-harbour}"     # values.yaml: docker.io/jithendar/custom-harbour
 KUBE_CONTEXT="${KUBE_CONTEXT:-mk4}"
 PULL_SECRET=dockerhub-pull                                # values.yaml: imagePullSecrets
-BUILD=true DEPLOY=true WITH_TRIVY=false GIT_CHECK=true
+BUILD=true DEPLOY=true WITH_TRIVY=false
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 step() { echo; echo "==> $*"; }
@@ -29,7 +29,6 @@ for arg in "$@"; do
     --skip-build) BUILD=false ;;
     --skip-deploy) DEPLOY=false ;;
     --with-trivy) WITH_TRIVY=true ;;
-    --skip-git-check) GIT_CHECK=false ;;
     -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) fail "unknown argument: $arg (see --help)" ;;
   esac
@@ -105,17 +104,9 @@ print(json.dumps({"apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/d
 }
 
 deploy() {
-  for command in kubectl python3 git; do
+  for command in kubectl python3 terraform; do
     command -v "$command" >/dev/null || fail "$command is required to deploy"
   done
-  if $GIT_CHECK; then
-    # Argo CD renders the chart values and manifests from master, not from this checkout.
-    git -C "$ROOT" fetch --quiet origin master
-    if ! git -C "$ROOT" diff --quiet origin/master -- deploy/minikube/harbor deploy/minikube/applications/optional \
-        deploy/minikube/namespaces/harbor.yaml; then
-      fail 'Harbor files here differ from origin/master, which Argo CD deploys. Merge and push first (or --skip-git-check).'
-    fi
-  fi
   if command -v docker >/dev/null; then
     for image in $IMAGES; do
       docker manifest inspect "$IMAGE_REPO:$image-$HARBOR_VERSION" >/dev/null 2>&1 ||
@@ -127,9 +118,11 @@ deploy() {
   "$ROOT/create-secrets.sh" --context "$KUBE_CONTEXT" --services harbor --apply
   ensure_pull_secret
 
-  step "Argo CD Application harbor"
-  python3 "$ROOT/scripts/argocd/deploy.py" harbor --context "$KUBE_CONTEXT"
-  kubectl --context "$KUBE_CONTEXT" -n harbor get pods,pvc,certificate,ingress
+  step "Terraform: releases harbor-access and harbor (minikube-infrastructure/harbor.tf)"
+  # The root also pulls OCI charts (Valkey, CloudNativePG); an empty Docker config keeps a docker credsStore helper
+  # that is not installed from breaking those pulls (minikube-infrastructure/README.md).
+  DOCKER_CONFIG="$(mktemp -d)" terraform -chdir="$ROOT/minikube-infrastructure" apply -var-file=vars/mk4.tfvars
+  kubectl --context "$KUBE_CONTEXT" -n harbor get pods,pvc,certificate,virtualservice
   echo
   echo 'Admin password: kubectl --context '"$KUBE_CONTEXT"' -n harbor get secret harbor-credentials -o jsonpath='"'"'{.data.HARBOR_ADMIN_PASSWORD}'"'"' | base64 -d'
   echo 'Back up harbor-credentials off-host now (README.md "Backup and restore").'

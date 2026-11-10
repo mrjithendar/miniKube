@@ -14,6 +14,8 @@ on:
       - 'deploy/minikube/storage/**'
       - 'deploy/minikube/postgres/**'
       - 'deploy/minikube/argocd/**'
+      - 'deploy/minikube/harbor/values.yaml'
+      - 'deploy/minikube/harbor/access/**'
       - '.github/mk4-terraform-kubeconfig.yaml'
       - '.github/workflows/*-mk-infrastructure.yml'
 
@@ -73,7 +75,7 @@ jobs:
           { echo 'basicAuthUsers:'; for n in $names; do echo "  $n: \"ci:{SHA}AAAAAAAAAAAAAAAAAAAAAAAAAAA=\""; done; } > "$RUNNER_TEMP/edge-ci.yaml"
           helm lint deploy/minikube/istio/edge -f "$RUNNER_TEMP/edge-ci.yaml"
           helm template check deploy/minikube/istio/edge -f "$RUNNER_TEMP/edge-ci.yaml" > /dev/null
-          for chart in cert-manager/issuers observability/prometheus observability/loki observability/jaeger \
+          for chart in cert-manager/issuers harbor/access observability/prometheus observability/loki observability/jaeger \
                        observability/otel-collector observability/grafana/dashboards; do
             helm lint "deploy/minikube/$chart"
             helm template check "deploy/minikube/$chart" > /dev/null

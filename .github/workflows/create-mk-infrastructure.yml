@@ -30,6 +30,8 @@ on:
       - 'deploy/minikube/storage/**'
       - 'deploy/minikube/postgres/**'
       - 'deploy/minikube/argocd/**'
+      - 'deploy/minikube/harbor/values.yaml'
+      - 'deploy/minikube/harbor/access/**'
       - '.github/mk4-terraform-kubeconfig.yaml'
       - '.github/workflows/create-mk-infrastructure.yml'
 
@@ -191,9 +193,9 @@ jobs:
         run: |
           set -euo pipefail
           # Only this root's releases.
-          releases='^(metrics-server|cert-manager|letsencrypt-jithendar|istio-base|istio-cni|istiod|istio-ingressgateway|istio-edge|istio-mesh|kiali|prometheus|grafana-dashboards|grafana|loki|otel-collector|jaeger|local-path-provisioner|cnpg|postgres-cluster|postgres-access|argocd)$'
+          releases='^(metrics-server|cert-manager|letsencrypt-jithendar|istio-base|istio-cni|istiod|istio-ingressgateway|istio-edge|istio-mesh|kiali|prometheus|grafana-dashboards|grafana|loki|otel-collector|jaeger|local-path-provisioner|cnpg|postgres-cluster|postgres-access|argocd|harbor-access|harbor)$'
           { echo '### Helm releases'; echo '```'; helm list -A --kube-context mk4 --filter "$releases"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          expected=21
+          expected=23
           deployed=$(helm list -A --kube-context mk4 --filter "$releases" --deployed -q | wc -l)
           [[ "$deployed" -eq "$expected" ]] || { echo "::error::$deployed of $expected releases deployed"; helm list -A --kube-context mk4 --filter "$releases"; exit 1; }
           # A freshly started pod (Kiali warms its caches) and a new route answer 503 for a while: retry for 3 min.

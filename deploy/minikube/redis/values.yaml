@@ -2,9 +2,14 @@
 # image). Terraform: minikube-infrastructure/redis.tf. Public access and mesh policy: ./access (release redis-access).
 #
 # The one Redis for every application on mk4 (replacing each application's own Redis pod):
-#   - three pods (valkey-0..2), each on its own node (required anti-affinity) with a local-path volume pinned to it,
-#     AOF every second plus RDB snapshots;
-#   - Sentinel in every pod (quorum 2 of 3) promotes a replica when the primary stops answering for 5 s;
+#   - two pods (valkey-0 primary, valkey-1 replica), one on each k3s worker (required anti-affinity; the control plane
+#     jithendar-master1 runs no workloads) with a local-path volume pinned to it, AOF every second plus RDB snapshots;
+#   - Sentinel in both pods (quorum 2 of 2): planned moves (rolling updates, drains, pod deletion) hand the primary over
+#     first (preStop failover, no vote needed), and a crashed Valkey process with its node still up fails over after 5 s.
+#     Losing a whole worker takes one of the two Sentinels with it, so the survivor cannot win a vote: when the
+#     primary's node is gone, writes fail until it is back or someone runs `sentinel failover mk4` (README.md, Redis).
+#     The replica keeps a copy of every key either way; a third worker would bring automatic failover back (replicaCount
+#     3, minAvailable 2);
 #   - an HAProxy sidecar in every pod forwards to whichever pod is primary right now, so applications keep one
 #     address across failovers and need no Sentinel support;
 #   - Istio sidecars, STRICT mTLS and an enforced ALLOW policy (namespace label in redis.tf, policies in ./access).
@@ -18,7 +23,7 @@
 fullnameOverride: valkey
 
 architecture: replication
-replicaCount: 3
+replicaCount: 2
 
 image:
   imagePullPolicy: IfNotPresent
@@ -89,7 +94,7 @@ sentinel:
 
 persistence:
   enabled: true
-  # Every application's keys, three times. maxmemory caps the dataset; AOF rewrites need about twice that.
+  # Every application's keys, twice. maxmemory caps the dataset; AOF rewrites need about twice that.
   # local-path does not enforce the size: the volumes share mk4's one disk.
   storageClass: local-path
   size: 2Gi
@@ -99,11 +104,6 @@ persistentVolumeClaimRetentionPolicy:
   enabled: true
   whenDeleted: Retain
   whenScaled: Retain
-
-# k3s on Hetzner has two workers; the third pod runs on the control plane (jithendar-master1, taint
-# CriticalAddonsOnly:NoExecute), so the three Sentinels stay on three nodes and losing any one keeps the quorum of 2.
-tolerations:
-  - {key: CriticalAddonsOnly, operator: Exists, effect: NoExecute}
 
 affinity:
   podAntiAffinity:
@@ -115,10 +115,10 @@ affinity:
             app.kubernetes.io/name: valkey
             app.kubernetes.io/instance: valkey
 
-# At most one pod down for voluntary disruptions (node drains): Sentinel keeps its quorum of 2.
+# A drain may take one pod (the other keeps serving); 2 would block every node drain, k3s upgrades included.
 pdb:
   enabled: true
-  minAvailable: 2
+  minAvailable: 1
 
 resources:
   requests:

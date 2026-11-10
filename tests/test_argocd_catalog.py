@@ -20,9 +20,9 @@ def test_catalog_has_unique_safe_ownership():
     assert not {'moks','catalogue-service','web'} & names
     assert not {'shopping-agent','product-ingestion','jfrog'} & names
     assert not {'argocd','traefik','coredns','kube-proxy','kindnet'}&names
-    # deploy/minikube/applications holds only the opt-in harbor; the add-ons are Terraform releases
+    # deploy/minikube/applications holds no Application: the add-ons, Argo CD and Harbor are Terraform releases
     # (minikube-infrastructure/) and RoboShop is on EKS (roboshop-ai/argocd-eks).
-    assert names=={'harbor'}
+    assert names==set()
     assert not any(ns=='roboshop-ai' and kind in ('Deployment','StatefulSet') for _,kind,ns,_ in owners)
 
 

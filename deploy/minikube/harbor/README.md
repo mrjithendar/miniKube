@@ -2,16 +2,18 @@
 
 A private OCI registry for the personal projects, so their images stop living in (and being pulled from) ECR.
 Official chart [`harbor/harbor` 1.19.4](https://github.com/goharbor/harbor-helm/tree/v1.19.4) (Harbor v2.15.4), one
-Argo CD Application, opt-in: `deploy.py all` never selects it.
+two Helm releases installed by Terraform ([`minikube-infrastructure/harbor.tf`](../../../minikube-infrastructure/harbor.tf)).
 
 | | |
 |---|---|
 | Portal | https://registry.jithendar.com/harbor/ (https://jithendar.com/harbor redirects there) |
 | Registry | `registry.jithendar.com/<project>/<image>:<tag>` |
-| Argo CD | Application `harbor`, AppProject `mk-registry`, namespace `harbor` ([`../applications/optional/`](../applications/optional/)) |
-| Files | [`values.yaml`](values.yaml) (chart), [`manifests/`](manifests/) (database, TLS, routes, backup), [`credentials.py`](credentials.py), [`deploy-harbor.sh`](deploy-harbor.sh) (build, push, deploy), [`examples/`](examples/) |
+| Releases | `harbor-access` (local chart [`access/`](access/): certificates, route, mTLS exception, backup), then `harbor` (chart, [`values.yaml`](values.yaml)); namespace `harbor` |
+| Database, Redis | the shared PostgreSQL (tenant `registry`, Secret `postgres-db-credentials`) and Valkey (tenant `harbor`, databases 2–5, Secret `redis-harbor-credentials`), both written by Terraform |
+| Files | [`values.yaml`](values.yaml), [`access/`](access/), [`credentials.py`](credentials.py), [`deploy-harbor.sh`](deploy-harbor.sh) (build, push, deploy), [`examples/`](examples/) |
 
-Status on 2026-11-06: nothing is deployed. DNS, images and secrets below are prerequisites.
+On the k3s cluster (2026-11-10): `harbor-credentials` exists; `dockerhub-pull` and the images are the remaining
+prerequisites.
 
 ## Design
 
@@ -25,19 +27,18 @@ origin with the site. Rewriting Harbor's responses in Traefik would break on eve
 
 So Harbor gets its own hostname (as JFrog did), and `https://jithendar.com/harbor/…` redirects to
 `https://registry.jithendar.com/harbor/…`, the portal's own routes. The hostname is a setting: change `externalURL`
-and `expose.ingress.hosts.core` in `values.yaml` and the hostnames in `manifests/harbor-public-certificate.yaml`,
-`manifests/harbor-http-ingress.yaml` and `manifests/harbor-shortcut-middleware.yaml`.
+in `values.yaml`, `host` in `access/values.yaml`, and the edge chart's `gateway.https` entry and `/harbor` redirect.
 
 ### Decisions
 
 | Decision | Why |
 |---|---|
 | Harbor images built from source for arm64 and kept in the private Docker Hub repository `jithendar/custom-harbour` | goharbor publishes amd64 only (v2.15.4 on Docker Hub and GHCR); every mk4 node is arm64. One tag per component, `<component>-v2.15.4`. Docker Hub is reachable when Harbor is not, so Harbor never needs itself to start. |
-| PostgreSQL 18 as a StatefulSet beside the chart; Redis on mk4's shared Valkey (`redis` namespace, tenant `harbor`, databases 2–5), not the chart's internal ones | Argo CD renders without cluster access. The chart's internal database takes its password only from values (default `changeit`), and its internal Redis has no password, yet Harbor keeps portal sessions in Redis. mk4 runs arbitrary code (MOKS terminals, the practice executor) and kindnet's NetworkPolicy enforcement is unproven, so both need real credentials. The Valkey user `harbor` can open only its own databases; Terraform writes its password into `harbor/redis-harbor-credentials` (`minikube-infrastructure/README.md`, "Redis (Valkey)"). |
-| Every chart credential in `harbor/harbor-credentials`, created by `./create-secrets.sh` | Anything the chart generates (`randAlphaNum`, `genCA`) would change on every Argo CD sync. The Redis password (from `redis-harbor-credentials`) is spliced into each component's Redis URL at runtime (`$(REDIS_PASSWORD)`), because the chart's `existingSecret` for Redis needs Helm `lookup`. |
+| The shared PostgreSQL 18 (`postgres-db`, tenant `registry`, through PgBouncer with `sslmode: require`) and the shared Valkey (`redis` namespace, tenant `harbor`, databases 2–5), not the chart's internal ones | The chart's internal database takes its password only from values (default `changeit`), and its internal Redis has no password, yet Harbor keeps portal sessions in Redis. The shared PostgreSQL has its own failover and backups, so Harbor runs no database of its own. mk4 runs arbitrary code (MOKS terminals, the practice executor) and kindnet's NetworkPolicy enforcement is unproven, so both need real credentials. The Valkey user `harbor` can open only its own databases; Terraform writes its password into `harbor/redis-harbor-credentials` (`minikube-infrastructure/README.md`, "Redis (Valkey)"). |
+| Every chart credential in `harbor/harbor-credentials`, created by `./create-secrets.sh` | Anything the chart generates (`randAlphaNum`, `genCA`) would change on every upgrade. The Redis password (from `redis-harbor-credentials`) is spliced into each component's Redis URL at runtime (`$(REDIS_PASSWORD)`), because the chart's `existingSecret` for Redis needs Helm `lookup`. |
 | Token-signing key from cert-manager (self-signed, 10 years, never rotated) | Same reason; cert-manager already owns TLS keys here. |
-| Everything on `mk4-m05` | Volumes are minikube hostPath, which exist only on one node. m02–m04 already hold the other databases. |
-| Istio gateway straight to core and portal (`manifests/harbor-virtualservice.yaml`), `expose.type: clusterIP`, no Harbor nginx | The gateway is mk4's edge (`../istio/README.md`). The chart has no "no ingress" mode; clusterIP renders no Ingress, and its nginx stays at 0 replicas (no arm64 build). |
+| No node pins; `local-path` volume | The registry volume lives on one worker, and the PV keeps the registry pod (and the backup job, by pod affinity) there. Nothing names a node, so a rebuilt cluster needs no edits. |
+| Istio gateway straight to core and portal (`access/templates/virtualservice.yaml`), `expose.type: clusterIP`, no Harbor nginx | The gateway is mk4's edge (`../istio/README.md`). The chart has no "no ingress" mode; clusterIP renders no Ingress, and its nginx stays at 0 replicas (no arm64 build). |
 | Trivy and the metrics exporter off | Memory. The exporter image also hard-codes `GOARCH=amd64`. |
 
 ### Request path for push and pull
@@ -65,16 +66,14 @@ Client → Cloudflare DNS (**DNS only**) → host HAProxy (TCP, PROXY protocol, 
 | jobservice (logs in PostgreSQL) | 50m / 500m | 128Mi / 512Mi | |
 | portal | 10m / 200m | 32Mi / 128Mi | |
 | registry + registryctl | 110m / 1.5 | 160Mi / 1.25Gi | `harbor-registry` 30Gi |
-| PostgreSQL 18 | 100m / 1 | 256Mi / 1Gi | `harbor-postgres-data` 5Gi |
-| **Total** | **370m / 4.2** | **832Mi / 3.35Gi** | **35Gi nominal** |
+| **Total** (database: the shared PostgreSQL) | **270m / 3.2** | **576Mi / 2.35Gi** | **30Gi nominal** |
 | Trivy, if enabled | 200m / 1 | 512Mi / 1Gi | 5Gi |
 | Backup job, daily while it runs | 100m / 1 | 128Mi / 512Mi | |
 
-The five nodes are containers on one 16 vCPU / 32 GB host, so these numbers come out of that one pool. On
-2026-11-06 the nodes requested about 4.1 CPU and 8.2 GiB in total and used about 12.4 GiB. **Disk is the tight resource:**
-hostPath sizes are not enforced, and the host filesystem every node shares had 43 GiB free of 150 GiB. Retention,
-GC and a disk alert matter more than the nominal 30Gi. If blobs outgrow the disk, Harbor's `s3` storage pointed at
-R2 is the next step; it is not configured here.
+These come out of the two k3s workers (cax21: 4 vCPU, 8 GB each); the control plane runs no workloads. **Disk is the
+tight resource:** local-path sizes are not enforced, and the registry shares its worker's disk with every other volume
+and image there. Retention and GC matter more than the nominal 30Gi. If blobs outgrow the disk, Harbor's `s3`
+storage pointed at R2 is the next step; it is not configured here.
 
 ## Prerequisites
 
@@ -90,13 +89,12 @@ Each is a setting this repository did not have before.
    runs the build on GitHub's hosted arm64 runner: add the repository secrets `DOCKERHUB_USERNAME` and
    `DOCKERHUB_TOKEN` (the write token). An Apple Silicon Mac with Docker Desktop, OrbStack or colima also works.
    The deploy step runs on any machine with kubectl access to mk4 and `htpasswd`, including the mk4 host.
-5. **Node.** `mk4-m05`, set in `values.yaml` and `manifests/`. Change every `kubernetes.io/hostname` together,
-   and only before the first sync: the volumes stay where the pods first ran.
+5. **Tenants.** `postgres_databases.registry` and `redis_tenants.harbor` in `minikube-infrastructure/vars/mk4.tfvars`
+   (both there already): Terraform writes the two connection Secrets Harbor reads.
 
 ## Deploy
 
-After the prerequisites, merge this branch and push it: Argo CD reads `master`, and the script stops if your
-Harbor files differ from `origin/master`. Then, from the repository root:
+After the prerequisites, from the repository root (Terraform deploys this checkout; nothing reads `master`):
 
 1. Build and push: GitHub, *Actions → Build Harbor images → Run workflow* (about half an hour the first time).
    On your own arm64 machine instead: `docker login`, then `bash deploy/minikube/harbor/deploy-harbor.sh --skip-deploy`.
@@ -104,7 +102,6 @@ Harbor files differ from `origin/master`. Then, from the repository root:
 
 ```bash
 docker login                                   # lets the script check the images exist (it skips the check without docker)
-python3 scripts/argocd/validate.py --external-charts
 bash deploy/minikube/harbor/deploy-harbor.sh --skip-build
 ```
 
@@ -116,21 +113,19 @@ The script:
 2. Pushes `jithendar/custom-harbour:harbor-portal-v2.15.4`, `harbor-core-…`, `harbor-jobservice-…`,
    `registry-photon-…` and `harbor-registryctl-…`.
 3. Runs `./create-secrets.sh --services harbor --apply` (namespace and `harbor-credentials`, never rotated), creates
-   `dockerhub-pull` if it is missing, and runs `scripts/argocd/deploy.py harbor` (creates `mk-registry` and
-   `harbor`, syncs without prune, waits for Healthy).
+   `dockerhub-pull` if it is missing, and runs `terraform apply` for the whole root (it asks before changing
+   anything): `harbor-access`, then `harbor`, waiting until every pod is ready.
 
 Afterwards, save a copy of `harbor-credentials` off-host (Backup and restore).
 
 | To | Run |
 |---|---|
 | Build and push only, deploy later | `deploy-harbor.sh --skip-deploy` |
-| Deploy images already pushed (also on re-syncs) | `deploy-harbor.sh --skip-build` |
+| Deploy images already pushed | `deploy-harbor.sh --skip-build` |
+| Change values later | `terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars` |
 | Include the Trivy adapter | `deploy-harbor.sh --with-trivy` |
 | Another repository or cluster | `IMAGE_REPO=… KUBE_CONTEXT=…` (and change `values.yaml` to match) |
 | Replace the pull token | `kubectl --context mk4 -n harbor delete secret dockerhub-pull`, then `--skip-build` |
-
-`deploy.py` does not update an AppProject that already exists. After changing `project-registry.yaml`, run
-`kubectl --context mk4 apply -f deploy/minikube/applications/optional/project-registry.yaml`.
 
 First sign-in: `https://registry.jithendar.com/harbor/`, user `admin`. Read the password locally, never in CI:
 
@@ -293,7 +288,7 @@ What a restore needs, and where it lives:
 |---|---|
 | PostgreSQL `registry` (projects, robots, policies, artifact index) | `harbor-backup` CronJob: `pg_dump -Fc` to R2 `backups/harbor/postgres/` |
 | Registry blobs (`/storage/docker`) | the same Job, `rclone copy` to R2 `backups/harbor/registry/` |
-| `harbor-credentials` (secretKey decrypts stored credentials; the database password is baked into its data directory) | **by hand**, to your password manager or an encrypted file, never next to the data |
+| `harbor-credentials` (secretKey decrypts stored credentials) | **by hand**, to your password manager or an encrypted file, never next to the data |
 | `harbor-backup-r2`, robot secrets | by hand, as above |
 | Redis, token key, TLS | not backed up: queues, sessions and keys are recreated |
 
@@ -316,7 +311,7 @@ print(json.dumps({'apiVersion': 'v1', 'kind': 'Secret', 'type': 'Opaque', 'metad
 EOF
 ```
 
-Then set `suspend: false` in `manifests/harbor-backup-cronjob.yaml`, merge, and sync. Run the first (full) copy by
+Then set `backup.suspend: false` in `access/values.yaml` and run `terraform apply`. Run the first (full) copy by
 hand rather than waiting for 02:30:
 `kubectl --context mk4 -n harbor create job --from=cronjob/harbor-backup harbor-backup-first`.
 
@@ -331,18 +326,18 @@ kubectl --context mk4 -n harbor get secret harbor-credentials -o json |
 # store harbor-credentials.json in the password manager, then: rm harbor-credentials.json
 ```
 
-### Restore, including after Minikube is rebuilt
+### Restore, including after the cluster is rebuilt
 
-Harbor's own images come from `jithendar/custom-harbour` and the database image from public Docker Hub; Redis is the
-shared Valkey (Terraform), so none of this needs Harbor.
+Harbor's own images come from `jithendar/custom-harbour`; the database and Redis are the shared PostgreSQL and Valkey
+(Terraform), so none of this needs Harbor.
 
-1. Rebuild the cluster as usual: `./deploy-minikube.sh`, `terraform -chdir=minikube-infrastructure apply` (Traefik with
-   its timeout, cert-manager and the add-ons), then `./bootstrap-cluster.sh --context mk4` (Argo CD, ECR pull secrets).
+1. Rebuild the cluster and run `terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars` (the add-ons,
+   PostgreSQL, Valkey; Harbor's releases stop at their preconditions until step 2).
 2. `kubectl --context mk4 apply -f deploy/minikube/namespaces/harbor.yaml`, then apply the saved
    `harbor-credentials.json` and recreate `harbor-backup-r2`. Restore `harbor-credentials` **before** anything
    else: `create-secrets.sh` would otherwise generate a new one, which cannot decrypt the restored data.
 3. `bash deploy/minikube/harbor/deploy-harbor.sh --skip-build`. It reuses the restored Secret, recreates
-   `dockerhub-pull`, and syncs. Harbor starts empty; core creates a fresh schema.
+   `dockerhub-pull`, and applies Terraform. Harbor starts empty; core creates a fresh schema.
 5. Stop everything that writes, then restore the dump named in `LATEST` and the blobs:
    ```bash
    kubectl --context mk4 -n harbor scale deploy harbor-core harbor-jobservice harbor-registry --replicas=0
@@ -350,7 +345,7 @@ shared Valkey (Terraform), so none of this needs Harbor.
      kubectl --context mk4 apply -f -
    kubectl --context mk4 -n harbor wait --for=condition=Complete job/harbor-restore --timeout=6h
    kubectl --context mk4 -n harbor delete job harbor-restore
-   python3 scripts/argocd/deploy.py harbor --context mk4       # restores the replicas
+   terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars   # restores the replicas
    ```
 6. Verify (above) and sign in with the old admin password. Robots and their secrets come back with the database.
    Recreate `harbor-pull` in namespaces that were rebuilt, from the `robot$k8s-pull` secret in your password manager.
@@ -369,10 +364,9 @@ pushing critical images to ECR too.
 
 ## Roll back
 
-Harbor is additive: no existing workload uses it until its manifests change. To stop it, delete the Application
-**without cascading** (`kubectl --context mk4 -n argocd delete application harbor`; `Delete=false` and the PVC
-annotations keep the volumes). Never sync it with prune. To remove the data too, delete the `harbor` namespace
-after a final backup. Reverting the Traefik timeout is a values change and a Traefik upgrade.
+Harbor is additive: no existing workload uses it until its manifests change. To stop it, remove `harbor.tf` and apply:
+both releases are uninstalled, and the registry volume stays (`resourcePolicy: keep`, local-path `Retain`). To remove
+the data too, delete the `harbor` namespace and the `registry` database tenant after a final backup.
 
 ## Not verified
 

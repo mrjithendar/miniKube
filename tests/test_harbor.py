@@ -1,4 +1,4 @@
-"""Harbor on mk4 (deploy/minikube/harbor): offline contracts. Rendering the pinned chart is validate.py --external-charts."""
+"""Harbor on mk4 (deploy/minikube/harbor): offline contracts. Terraform installs it (minikube-infrastructure/harbor.tf)."""
 import importlib.util
 import json
 from pathlib import Path
@@ -11,10 +11,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 HARBOR = ROOT / 'deploy/minikube/harbor'
-OPTIONAL = ROOT / 'deploy/minikube/applications/optional'
 VALUES = yaml.safe_load((HARBOR / 'values.yaml').read_text())
-APP = yaml.safe_load((OPTIONAL / 'harbor.yaml').read_text())
 SCRIPT = (HARBOR / 'deploy-harbor.sh').read_text()
+TERRAFORM = (ROOT / 'minikube-infrastructure/harbor.tf').read_text()
 
 
 def load(name, path):
@@ -26,11 +25,12 @@ def load(name, path):
 
 credentials = load('harbor_credentials', HARBOR / 'credentials.py')
 deploy = load('harbor_deploy', ROOT / 'scripts/argocd/deploy.py')
-validate = load('harbor_validate', ROOT / 'scripts/argocd/validate.py')
 
 
 def manifests():
-    return [d for d in yaml.safe_load_all(subprocess.check_output(['kubectl', 'kustomize', str(HARBOR / 'manifests')], text=True)) if d]
+    """Harbor's objects outside the chart: the harbor-access release (minikube-infrastructure/harbor.tf)."""
+    rendered = subprocess.check_output(['helm', 'template', 'harbor-access', str(HARBOR / 'access'), '--namespace', 'harbor'], text=True)
+    return [d for d in yaml.safe_load_all(rendered) if d]
 
 
 def by_name(kind):
@@ -47,56 +47,15 @@ def pod_specs():
             yield doc['metadata']['name'], spec['template']['spec']
 
 
-def test_harbor_is_opt_in(capsys):
-    assert 'harbor.yaml' not in yaml.safe_load((ROOT / 'deploy/minikube/applications/kustomization.yaml').read_text())['resources']
-    assert 'harbor' not in deploy.catalog()[0]
-    with patch('sys.argv', ['deploy', '--dry-run']), patch.object(deploy.subprocess, 'check_output') as run:
-        deploy.main()
-    run.assert_not_called()
-    assert 'harbor' not in capsys.readouterr().out
-    with patch('sys.argv', ['deploy', 'harbor', '--dry-run']), patch.object(deploy.subprocess, 'check_output') as run:
-        deploy.main()
-    run.assert_not_called()
-    assert 'action: harbor' in capsys.readouterr().out
-    with patch('sys.argv', ['deploy', 'list']):
-        deploy.main()
-    assert 'Opt-in apps (by name only, never in all): harbor' in capsys.readouterr().out
-
-
-def test_selecting_harbor_creates_its_project_first():
-    # Fresh cluster: CRDs present, no Applications, no AppProject mk-registry.
-    healthy = {'items': [{**APP, 'status': {'operationState': {'phase': 'Succeeded'}, 'sync': {'status': 'Synced'},
-                                             'health': {'status': 'Healthy'}, 'resources': [{'kind': 'Deployment'}]}}]}
-    outputs = ['crd/applications', 'crd/appprojects', json.dumps({'items': []}), '', 'appproject created\n',
-               'application created\n', 'patched\n', json.dumps(healthy)]
-    with patch('sys.argv', ['deploy', 'harbor']), patch.object(deploy.subprocess, 'check_output', side_effect=outputs) as run, \
-            patch.object(deploy.subprocess, 'check_call') as apply:
-        deploy.main()
-    assert apply.call_args.args[0][-1].endswith('deploy/minikube/namespaces/harbor.yaml')
-    created = [json.loads(c.kwargs['input']) for c in run.call_args_list if 'create' in c.args[0]]
-    assert [d['kind'] for d in created] == ['AppProject', 'Application']
-    assert created[0]['metadata']['name'] == APP['spec']['project'] == 'mk-registry'
-    sync = json.loads(run.call_args_list[6].kwargs['input'])['operation']['sync']
-    assert sync['prune'] is False
-
-
-def test_application_pins_the_official_chart_and_reads_tools():
-    chart, values, path = APP['spec']['sources']
-    assert (chart['repoURL'], chart['chart'], chart['targetRevision']) == ('https://helm.goharbor.io', 'harbor', '1.19.4')
-    assert chart['helm'] == {'releaseName': 'harbor', 'valueFiles': ['$values/deploy/minikube/harbor/values.yaml']}
-    assert values == {'repoURL': 'https://github.com/mrjithendar/miniKube.git', 'targetRevision': 'master', 'ref': 'values'}
-    assert path['path'] == 'deploy/minikube/harbor/manifests'
-    assert APP['spec']['destination'] == {'server': 'https://kubernetes.default.svc', 'namespace': 'harbor'}
-    assert APP['spec']['syncPolicy']['automated'] == {'enabled': True, 'prune': False, 'selfHeal': True}
-    assert APP['metadata']['annotations']['argocd.argoproj.io/sync-options'] == 'Prune=false,Delete=false'
-
-
-def test_project_allows_only_the_harbor_namespace():
-    project = yaml.safe_load((OPTIONAL / 'project-registry.yaml').read_text())['spec']
-    assert project['destinations'] == [{'namespace': 'harbor', 'server': 'https://kubernetes.default.svc'}]
-    assert project['clusterResourceWhitelist'] == [{'group': '', 'kind': 'Namespace'}]
-    assert set(project['sourceRepos']) == {'https://github.com/mrjithendar/miniKube.git', 'https://helm.goharbor.io'}
-    assert {'group': '*', 'kind': '*'} not in project['namespaceResourceWhitelist']
+def test_harbor_is_a_terraform_release_not_an_argo_cd_application():
+    assert 'harbor' not in deploy.catalog()[0] and 'harbor' not in deploy.optional_catalog()[0]
+    assert not (ROOT / 'deploy/minikube/applications/optional/harbor.yaml').exists()
+    assert not (HARBOR / 'manifests').exists()
+    assert 'repository = "https://helm.goharbor.io"' in TERRAFORM and 'version    = "1.19.4"' in TERRAFORM
+    assert 'chart     = "${local.minikube}/harbor/access"' in TERRAFORM
+    # Prerequisites are checked before anything is installed.
+    assert 'contains(local.harbor_secrets, "harbor-credentials")' in TERRAFORM
+    assert 'contains(local.harbor_secrets, "dockerhub-pull")' in TERRAFORM
 
 
 def test_namespace_manifest_matches_deploy_contract():
@@ -133,10 +92,14 @@ def test_gateway_routes_what_the_chart_ingress_did():
     assert certificate['secretName'] == 'harbor-public-tls' and certificate['issuerRef']['name'] == 'letsencrypt-dns'
 
 
-def test_everything_runs_on_one_node():
-    nodes = {VALUES[c]['nodeSelector']['kubernetes.io/hostname'] for c in ('portal', 'core', 'jobservice', 'registry', 'trivy')}
-    nodes |= {spec['nodeSelector']['kubernetes.io/hostname'] for _, spec in pod_specs()}
-    assert nodes == {'mk4-m05'}
+def test_no_node_pins_volumes_decide_and_jobs_follow_the_registry():
+    # local-path volumes keep each pod on the worker that holds them; no hostname survives a cluster rebuild.
+    assert not any('nodeSelector' in VALUES[c] for c in ('portal', 'core', 'jobservice', 'registry', 'trivy'))
+    assert VALUES['persistence']['persistentVolumeClaim']['registry']['storageClass'] == 'local-path'
+    for name, spec in pod_specs():
+        assert 'nodeSelector' not in spec, name
+        term = spec['affinity']['podAffinity']['requiredDuringSchedulingIgnoredDuringExecution'][0]
+        assert term['labelSelector']['matchLabels'] == {'app': 'harbor', 'component': 'registry'}, name
 
 
 def test_chart_images_are_the_tags_the_script_pushes():
@@ -155,14 +118,13 @@ def test_chart_images_are_the_tags_the_script_pushes():
     assert VALUES['metrics']['enabled'] is False and VALUES['trivy']['enabled'] is False
 
 
-def test_script_pins_source_refuses_the_cluster_host_and_deploys_from_master():
+def test_script_pins_source_refuses_the_cluster_host_and_leaves_the_deploy_to_terraform():
     assert re.search(r'^HARBOR_COMMIT=[0-9a-f]{40}\b', SCRIPT, re.M)
     assert '[ "$(git -C "$WORK/harbor" rev-parse HEAD)" = "$HARBOR_COMMIT" ]' in SCRIPT
     assert "grep -qx mk4" in SCRIPT and "'{{.Server.Arch}}')\" = arm64" in SCRIPT
     assert 'PULL_BASE_FROM_DOCKERHUB=false' in SCRIPT and 'make/photon/common/Dockerfile' in SCRIPT
-    # Argo CD renders from master, so the deploy refuses a checkout that differs from it.
-    assert 'git -C "$ROOT" diff --quiet origin/master -- deploy/minikube/harbor' in SCRIPT
-    assert '--services harbor --apply' in SCRIPT and 'scripts/argocd/deploy.py" harbor' in SCRIPT
+    assert '--services harbor --apply' in SCRIPT and 'terraform -chdir="$ROOT/minikube-infrastructure" apply -var-file=vars/mk4.tfvars' in SCRIPT
+    assert 'scripts/argocd/deploy.py' not in SCRIPT
     # The Docker Hub token goes to kubectl on stdin, never argv.
     assert 'DOCKERHUB_TOKEN="$token" python3 -c' in SCRIPT and '--docker-password' not in SCRIPT
     subprocess.run(['bash', '-n', str(HARBOR / 'deploy-harbor.sh')], check=True)
@@ -209,10 +171,13 @@ def test_every_chart_credential_is_external_and_provisioned():
     assert VALUES['existingSecretAdminPassword'] == VALUES['existingSecretSecretKey'] == secret
     assert VALUES['core']['existingSecret'] == VALUES['core']['existingXsrfSecret'] == secret
     assert VALUES['jobservice']['existingSecret'] == VALUES['registry']['existingSecret'] == secret
-    assert VALUES['registry']['credentials']['existingSecret'] == VALUES['database']['external']['existingSecret'] == secret
+    assert VALUES['registry']['credentials']['existingSecret'] == secret
+    # The database password is the shared PostgreSQL tenant's (postgres.tf), not Harbor's own.
+    assert VALUES['database']['external']['existingSecret'] == 'postgres-db-credentials'
     assert VALUES['core']['secretName'] == by_name('Certificate')['harbor-token']['spec']['secretName']
     assert VALUES['registry']['credentials']['username'] == credentials.REGISTRY_USER
-    # Chart-defined key names (values.yaml comments) plus every secretKeyRef.
+    # Chart-defined key names (values.yaml comments) plus every secretKeyRef. "password" was harbor-postgres's;
+    # create-secrets.sh still writes it so existing Secrets stay complete, and nothing reads it.
     chart_keys = {VALUES['existingSecretAdminPasswordKey'], 'secretKey', 'secret', VALUES['core']['existingXsrfSecretKey'],
                   VALUES['jobservice']['existingSecretKey'], VALUES['registry']['existingSecretKey'],
                   'REGISTRY_PASSWD', 'REGISTRY_HTPASSWD', 'password'}
@@ -221,6 +186,14 @@ def test_every_chart_credential_is_external_and_provisioned():
     assert 'harborAdminPassword' not in VALUES and 'secretKey' not in VALUES
     assert VALUES['redis']['external']['password'] == '' and 'existingSecret' not in VALUES['redis']['external']
     assert VALUES['database']['type'] == VALUES['redis']['type'] == 'external'
+
+
+def test_database_is_the_shared_postgres_through_pgbouncer():
+    db = VALUES['database']
+    assert db['external']['host'] == 'postgres-cluster-pooler-rw.postgres-db.svc.cluster.local'
+    assert db['external']['username'] == db['external']['coreDatabase'] == 'registry'   # tenant "registry"
+    assert db['external']['sslmode'] == 'require'   # postgres-db has no sidecars: TLS is the only encryption
+    assert db['maxOpenConns'] * 2 <= 50   # core + jobservice under the role's connection_limit
 
 
 @pytest.mark.parametrize('component,names', [
@@ -258,31 +231,8 @@ def test_redis_is_the_shared_valkey_within_the_harbor_tenant():
     assert not [d for d in manifests() if 'redis' in d['metadata']['name']]   # no Redis of Harbor's own
 
 
-def test_database_and_redis_volumes_survive_prune_and_sync_first():
-    for name in ('harbor-postgres-data',):
-        annotations = by_name('PersistentVolumeClaim')[name]['metadata']['annotations']
-        assert annotations['argocd.argoproj.io/sync-options'] == 'Prune=false,Delete=false'
-    for name in ('harbor-postgres',):
-        assert by_name('StatefulSet')[name]['metadata']['annotations']['argocd.argoproj.io/sync-wave'] == '-1'
-    claim = VALUES['persistence']['persistentVolumeClaim']['registry']
-    assert claim['annotations']['argocd.argoproj.io/sync-options'] == 'Prune=false,Delete=false'
+def test_registry_volume_survives_uninstall():
     assert VALUES['persistence']['resourcePolicy'] == 'keep'
-
-
-def test_nothing_waits_on_a_later_sync_wave():
-    # Argo CD waits for each wave to be healthy before the next: a wave -1 Certificate whose Issuer sat in wave 0
-    # never became Ready, and the first sync hung.
-    def wave(doc):
-        return int(doc['metadata'].get('annotations', {}).get('argocd.argoproj.io/sync-wave', '0'))
-    for certificate in by_name('Certificate').values():
-        ref = certificate['spec']['issuerRef']
-        if ref.get('kind', 'Issuer') == 'Issuer':
-            assert wave(by_name('Issuer')[ref['name']]) < wave(certificate), certificate['metadata']['name']
-    for workload in by_name('StatefulSet').values():
-        for volume in workload['spec']['template']['spec']['volumes']:
-            if 'persistentVolumeClaim' in volume:
-                claim = by_name('PersistentVolumeClaim')[volume['persistentVolumeClaim']['claimName']]
-                assert wave(claim) <= wave(workload), volume
 
 
 def test_backup_is_suspended_and_dumps_before_copying():
@@ -295,23 +245,11 @@ def test_backup_is_suspended_and_dumps_before_copying():
     assert upload.index('postgres/registry-') < upload.index('rclone copy /storage') < upload.index('/LATEST')
     claim = next(v for v in pod['volumes'] if v['name'] == 'registry-data')['persistentVolumeClaim']
     assert claim == {'claimName': 'harbor-registry', 'readOnly': True}
-    # harbor-credentials itself is never uploaded: only the database password is read, by pg_dump.
-    assert {r['secretKeyRef']['key'] for c in pod['initContainers'] + pod['containers'] for e in c.get('env', [])
-            for r in [e.get('valueFrom', {})] if r.get('secretKeyRef', {}).get('name') == 'harbor-credentials'} == {'password'}
-
-
-def test_validator_rejects_a_harbor_secret_with_a_value(monkeypatch):
-    original = validate.render
-
-    def leaky(app, external=False):
-        rendered = original(app, external)
-        if app['metadata']['name'] == 'harbor':
-            rendered.append({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'harbor-core'},
-                             'data': {'HARBOR_ADMIN_PASSWORD': 'SGFyYm9yMTIzNDU='}})
-        return rendered
-    monkeypatch.setattr(validate, 'render', leaky)
-    with pytest.raises(AssertionError, match='carries a value'):
-        validate.validate()
+    # harbor-credentials is never read; pg_dump reads only the database tenant's login, straight to the primary.
+    refs = {(r['secretKeyRef']['name'], r['secretKeyRef']['key']) for c in pod['initContainers'] + pod['containers']
+            for e in c.get('env', []) for r in [e.get('valueFrom', {})] if 'secretKeyRef' in r}
+    assert not {k for n, k in refs if n == 'harbor-credentials'}
+    assert {k for n, k in refs if n == 'postgres-db-credentials'} == {'direct-host', 'username', 'dbname', 'password'}
 
 
 def test_generated_credentials_meet_harbor_rules():

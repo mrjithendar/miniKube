@@ -1,0 +1,5 @@
+apiVersion: v2
+name: harbor-access
+description: Harbor's objects outside the chart on mk4 - token and public certificates, the registry.jithendar.com route, the registry's mTLS exception and the (suspended) R2 backup.
+type: application
+version: 0.1.0

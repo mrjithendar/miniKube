@@ -1,5 +1,5 @@
 # Off-host backup to Cloudflare R2: README.md "Backup and restore". Suspended until harbor/harbor-backup-r2 exists;
-# set suspend: false in Git to enable it.
+# set backup.suspend false in ../values.yaml to enable it.
 # The database is dumped before the blobs are copied, and blobs are only ever added in R2 (rclone copy, never sync),
 # so every dump has all the blobs it references. Keep garbage collection out of this window (README.md).
 # harbor-credentials is not uploaded: it is backed up separately, by hand, so one leak does not expose both.
@@ -7,14 +7,14 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: harbor-backup
-  namespace: harbor
+  namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: harbor-backup
     app.kubernetes.io/part-of: harbor
 spec:
-  schedule: '30 2 * * *'
+  schedule: {{ .Values.backup.schedule | quote }}
   timeZone: Etc/UTC
-  suspend: true
+  suspend: {{ .Values.backup.suspend }}
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -29,20 +29,34 @@ spec:
             app.kubernetes.io/part-of: harbor
         spec:
           restartPolicy: Never
-          # The registry volume is a hostPath on this node; ReadWriteOnce allows a second pod on the same node.
-          nodeSelector:
-            kubernetes.io/hostname: mk4-m05
+          # The registry volume is local-path on one node; ReadWriteOnce allows a second pod on that same node.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels: {app: harbor, component: registry}
           automountServiceAccountToken: false
           initContainers:
           - name: dump
             image: postgres:18.6-alpine
             command: [sh, -c]
             args:
-            - pg_dump -h harbor-postgres -U harbor -d registry -Fc -f /work/registry.dump && pg_restore -l /work/registry.dump >/dev/null
+            # The shared PostgreSQL, straight to the primary (pg_dump needs a session of its own, not PgBouncer's).
+            - pg_dump -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -Fc -f /work/registry.dump && pg_restore -l /work/registry.dump >/dev/null
             env:
+            - name: PGHOST
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.databaseSecret }}, key: direct-host}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.databaseSecret }}, key: username}
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.databaseSecret }}, key: dbname}
             - name: PGPASSWORD
               valueFrom:
-                secretKeyRef: {name: harbor-credentials, key: password}
+                secretKeyRef: {name: {{ .Values.databaseSecret }}, key: password}
             resources:
               requests: {cpu: 50m, memory: 64Mi}
               limits: {cpu: 500m, memory: 256Mi}

@@ -16,6 +16,13 @@ mock_provider "kubernetes" {
       }
     }
   }
+  # Harbor's prerequisites (create-secrets.sh, deploy-harbor.sh).
+  override_data {
+    target = data.kubernetes_resources.harbor_prerequisites
+    values = {
+      objects = [{ metadata = { name = "harbor-credentials" } }, { metadata = { name = "dockerhub-pull" } }]
+    }
+  }
 }
 mock_provider "random" {}
 
@@ -303,4 +310,29 @@ run "redis_argocd_name_refused" {
   }
 
   expect_failures = [var.redis_tenants]
+}
+
+run "harbor_on_the_shared_databases" {
+  command = plan
+
+  variables {
+    postgres_databases = { registry = { namespace = "harbor" } }
+    redis_tenants      = { harbor = { namespace = "harbor", databases = [2, 3, 4, 5] } }
+  }
+
+  assert {
+    condition = (
+      helm_release.harbor.version == "1.19.4" &&
+      helm_release.harbor.repository == "https://helm.goharbor.io" &&
+      helm_release.harbor.namespace == "harbor" &&
+      helm_release.harbor_access.namespace == "harbor" &&
+      kubernetes_labels.harbor_namespace.metadata[0].name == "harbor" &&
+      kubernetes_labels.harbor_namespace.labels["istio-injection"] == "enabled" &&
+      yamldecode(helm_release.harbor.values[0]).database.external.host == local.postgres_pool_host &&
+      yamldecode(helm_release.harbor.values[0]).database.external.existingSecret == "postgres-db-credentials" &&
+      yamldecode(helm_release.harbor.values[0]).redis.external.addr == "${local.redis_host}:6379" &&
+      yamldecode(helm_release.harbor.values[0]).persistence.persistentVolumeClaim.registry.storageClass == "local-path"
+    )
+    error_message = "Harbor is pinned, in the mesh, uses the shared PostgreSQL (tenant registry) and Valkey (tenant harbor), on local-path."
+  }
 }

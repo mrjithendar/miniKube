@@ -23,6 +23,7 @@ only the AppProject `mk-platform` and the opt-in `harbor`.
 | `postgres.tf` | `cnpg` | cnpg `cloudnative-pg` 0.29.1 (operator 1.30.1) | `cnpg-system` | `deploy/minikube/postgres/operator.yaml` |
 | `postgres.tf` | `postgres-cluster`, `postgres-access` | cnpg `cluster` 0.9.0; local `deploy/minikube/postgres/access` | `postgres-db` | `deploy/minikube/postgres/cluster.yaml` + per-application databases/roles/Secrets from `postgres_databases`; pgAdmin 4 (+ admin Secret `postgres-ui-admin`), TCP route, gateway allowlists (`postgres_allowed_ips`), NetworkPolicies, metrics Service |
 | `argocd.tf` | `argocd` | argo `argo-cd` 10.10.5 (Argo CD v3.5.5) | `argocd` | `deploy/minikube/argocd/values.yaml`: https://jithendar.com/argocd (VirtualService delegate of the edge routing table, sidecar NetworkPolicy); no Redis of its own, its cache is Valkey tenant `argocd` (database 7, Secret `argocd-redis-valkey`) |
+| `harbor.tf` | `harbor-access`, `harbor` | local `deploy/minikube/harbor/access`; goharbor `harbor` 1.19.4 (Harbor v2.15.4, arm64 images from Docker Hub `jithendar/custom-harbour`) | `harbor` | https://registry.jithendar.com (https://jithendar.com/harbor redirects there); `deploy/minikube/harbor/values.yaml`; database on the shared PostgreSQL (`postgres_databases.registry`), Redis on Valkey (`redis_tenants.harbor`); refuses to plan without Secrets `harbor-credentials` and `dockerhub-pull` ([README](../deploy/minikube/harbor/README.md)) |
 | `redis.tf` | `valkey`, `redis-access` | cloudpirates `valkey` 0.25.16 (Valkey 9.1, OCI); local `deploy/minikube/redis/access` | `redis` | `deploy/minikube/redis/values.yaml` + post-renderer `postrender-haproxy.sh`; per-application ACL users and Secrets from `redis_tenants`; STRICT mTLS + enforced AuthorizationPolicy, RedisInsight (gateway login `redis-ui-auth`), TCP route, gateway allowlists (`redis_allowed_ips`), NetworkPolicies, metrics Service |
 
 `versions.tf` (providers, S3 backend), `variables.tf` (`kubeconfig_path` `~/.kube/config`, `kube_context` `mk4`,
@@ -122,9 +123,13 @@ that instance's PVC (or `kubectl cnpg destroy`) makes the operator rebuild it on
 ## Redis (Valkey)
 
 **One Redis for every application on mk4.** StatefulSet `valkey` in namespace `redis`: Valkey 9.1 (Redis 7.2
-protocol), three pods on three nodes, each with a 2Gi `local-path` volume (AOF every second plus RDB). Each pod runs
-Valkey, Sentinel, an HAProxy "master proxy", the exporter and an Istio sidecar. Sentinel (quorum 2 of 3) promotes a
-replica after 5 s without an answer from the primary. HAProxy in every pod forwards to whichever pod is primary right
+protocol), a primary and one replica, one pod on each of the two k3s workers (the control plane runs no workloads),
+each with a 2Gi `local-path` volume (AOF every second plus RDB). Each pod runs Valkey, Sentinel, an HAProxy "master
+proxy", the exporter and an Istio sidecar. Sentinel (quorum 2 of 2) promotes the replica after 5 s without an answer
+from a crashed primary whose node is still up. **A lost worker is not failed over automatically:** its Sentinel goes
+with it and the survivor cannot win a vote alone. If the primary's worker is down for good, promote the replica by hand:
+`$K -n redis exec valkey-1 -c valkey -- sh -c 'REDISCLI_AUTH=$VALKEY_PASSWORD valkey-cli -p 26379 sentinel failover mk4'`.
+A third worker brings automatic failover back (`replicaCount: 3`, `pdb.minAvailable: 2`). HAProxy in every pod forwards to whichever pod is primary right
 now, so applications use one address and need no Sentinel support. A rolling update or pod deletion hands the primary
 over first (preStop failover): measured on 2026-11-09, deleting the primary cost a writing client 2 failed writes over
 about 4 s, after which writes resumed on the new primary through the same address.
@@ -193,7 +198,7 @@ Both public ways in are refused on the gateway unless the client address is in `
 `$K -n redis get secret redis-ui-auth -o jsonpath='{.data.password}' | base64 -d`.
 
 **Health:** `$K -n redis exec valkey-0 -c valkey -- sh -c 'REDISCLI_AUTH=$VALKEY_PASSWORD valkey-cli -p 26379 sentinel master mk4'`
-(also `sentinel ckquorum mk4`; `info replication` on the primary shows `connected_slaves:2`). Alerts (Prometheus job
+(also `sentinel ckquorum mk4`; `info replication` on the primary shows `connected_slaves:1`). Alerts (Prometheus job
 `redis`): `ValkeyDown`, `ValkeyReplicaMissing`, `ValkeyMemoryHigh`, `ValkeyEvictingKeys`.
 
 **First install, in stages:** the edge chart refuses to plan until the gateway has a `redis` login line, which needs

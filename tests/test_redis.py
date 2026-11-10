@@ -33,14 +33,15 @@ def allowed():
 
 
 def test_sentinel_fails_over_and_the_master_proxy_hides_it():
-    assert VALUES['architecture'] == 'replication' and VALUES['replicaCount'] == 3
+    assert VALUES['architecture'] == 'replication' and VALUES['replicaCount'] == 2
     s = VALUES['sentinel']
     assert s['enabled'] and s['quorum'] == 2 and s['masterProxy']['enabled']
     assert s['valkeyShutdownWaitFailover'] and s['preStop']['enabled']
-    assert VALUES['pdb'] == {'enabled': True, 'minAvailable': 2}   # one pod down at most: quorum survives a drain
+    assert VALUES['pdb'] == {'enabled': True, 'minAvailable': 1}   # one per worker: a drain may take one, never both
 
 
 def test_pods_spread_over_nodes_on_pinned_volumes():
+    assert 'tolerations' not in VALUES   # never on the control plane
     term = VALUES['affinity']['podAntiAffinity']['requiredDuringSchedulingIgnoredDuringExecution'][0]
     assert term['topologyKey'] == 'kubernetes.io/hostname'
     assert VALUES['persistence']['storageClass'] == 'local-path'

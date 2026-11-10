@@ -8,6 +8,7 @@ service:
   port: 80
 persistence:
   enabled: true
+  storageClassName: local-path
   size: 2Gi
   accessModes: [ReadWriteOnce]
   annotations:
@@ -169,6 +170,5 @@ dashboardsConfigMaps:
   moks: grafana-dashboards-moks
   platform: grafana-dashboards-platform
 
-# Minikube hostPath data lives on this node; move only together with the data.
-nodeSelector:
-  kubernetes.io/hostname: mk4-m04
+# No node pin: the local-path volume keeps the pod on the node that holds its data.
+nodeSelector: {}

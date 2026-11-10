@@ -24,6 +24,13 @@ nodePathMap:
 
 image:
   pullPolicy: Always
+
+# The helper pod creates and removes each volume's folder on the volume's node, the tainted control plane included
+# (Valkey's third pod, deploy/minikube/redis/values.yaml).
+configmap:
+  helperPod:
+    tolerations:
+      - {key: CriticalAddonsOnly, operator: Exists, effect: NoExecute}
 helperImage:
   repository: docker.io/library/busybox
   tag: latest

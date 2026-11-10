@@ -19,8 +19,10 @@ terraform {
   }
 
   backend "s3" {
-    bucket       = "jithendardharmapuri"
-    key          = "terraform/minikube-mk4.tfstate"
+    bucket = "jithendardharmapuri"
+    # mk4 is the k3s cluster on Hetzner Cloud since 2026-11-10 (hetzner-k3s, ../../hetzner-k3s.yaml). The Minikube
+    # mk4's state stays at terraform/minikube-mk4.tfstate for reference; that server was deleted.
+    key          = "terraform/k3s-mk4.tfstate"
     region       = "us-east-1"
     encrypt      = true
     use_lockfile = true

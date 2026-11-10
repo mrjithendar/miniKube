@@ -219,8 +219,8 @@ run "redis_tenants_get_a_scoped_user_and_credentials" {
     condition = (
       local.redis_tenant_acl["blog"] == "~* &* +@all -@admin -flushall -swapdb db=4,5" &&
       local.redis_tenant_acl["shop"] == "~* &* +@all -@admin -flushall -swapdb db=3" &&
-      length(local.redis_acl_lines) == 3 &&
-      length(local.redis_overrides.config.extraConfig) == length(local.redis_values.config.extraConfig) + 3
+      length(local.redis_acl_lines) == 4 &&
+      length(local.redis_overrides.config.extraConfig) == length(local.redis_values.config.extraConfig) + 4
     )
     error_message = "Each tenant's user is limited to its own databases and has no admin command; the file's config lines are kept."
   }
@@ -241,6 +241,46 @@ run "redis_shared_database_refused" {
   expect_failures = [var.redis_tenants]
 }
 
+run "argocd_uses_the_shared_valkey" {
+  command = plan
+
+  assert {
+    condition = (
+      helm_release.argocd.version == "10.10.5" &&
+      helm_release.argocd.namespace == "argocd" &&
+      kubernetes_namespace_v1.argocd.metadata[0].labels["istio-injection"] == "enabled" &&
+      local.argocd_values.redis.enabled == false &&
+      local.argocd_values["redis-ha"].enabled == false &&
+      local.argocd_values.externalRedis.host == local.redis_host &&
+      kubernetes_secret_v1.argocd_redis.metadata[0].namespace == "argocd" &&
+      kubernetes_secret_v1.argocd_redis.data["redis-username"] == "argocd"
+    )
+    error_message = "Argo CD runs no Redis of its own; it signs in to valkey-master as ACL user argocd, from the mesh."
+  }
+
+  assert {
+    condition = (
+      local.redis_tenant_acl["argocd"] == "~* &* +@all -@admin -flushall -swapdb db=7" &&
+      local.argocd_values.configs.params["redis.db"] == "7" &&
+      contains(yamldecode(helm_release.redis_access.values[1]).clientNamespaces, "argocd") &&
+      !contains(keys(kubernetes_secret_v1.redis_app), "argocd")
+    )
+    error_message = "ACL user argocd is limited to database 7 and namespace argocd may reach Valkey."
+  }
+}
+
+run "redis_argocd_database_refused" {
+  command = plan
+
+  variables {
+    postgres_allowed_ips = ["192.0.2.1/32"]
+    redis_allowed_ips    = ["192.0.2.1/32"]
+    redis_tenants        = { app = { namespace = "x", databases = [7] } }
+  }
+
+  expect_failures = [var.redis_tenants]
+}
+
 run "redis_reserved_name_refused" {
   command = plan
 
@@ -248,6 +288,18 @@ run "redis_reserved_name_refused" {
     postgres_allowed_ips = ["192.0.2.1/32"]
     redis_allowed_ips    = ["192.0.2.1/32"]
     redis_tenants        = { default = { namespace = "x", databases = [1] } }
+  }
+
+  expect_failures = [var.redis_tenants]
+}
+
+run "redis_argocd_name_refused" {
+  command = plan
+
+  variables {
+    postgres_allowed_ips = ["192.0.2.1/32"]
+    redis_allowed_ips    = ["192.0.2.1/32"]
+    redis_tenants        = { argocd = { namespace = "x", databases = [1] } }
   }
 
   expect_failures = [var.redis_tenants]

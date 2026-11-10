@@ -7,6 +7,8 @@ metadata:
     helm.sh/resource-policy: keep
 spec:
   accessModes: [ReadWriteOnce]
+  # Node-local disk (local-path-provisioner); the PV pins the pod to the node that holds it.
+  storageClassName: local-path
   resources:
     requests:
       storage: {{ .Values.storage }}

@@ -18,9 +18,6 @@ spec:
       labels:
         app: alloy
     spec:
-      # Minikube hostPath data lives on this node; move only together with the data.
-      nodeSelector:
-        kubernetes.io/hostname: mk4-m03
       securityContext:
         runAsUser: 473
         runAsGroup: 473

@@ -22,6 +22,7 @@ only the AppProject `mk-platform` and the opt-in `harbor`.
 | `local-path.tf` | `local-path-provisioner` | vendored `deploy/minikube/storage/local-path-provisioner` (rancher v0.0.37) | `local-path-storage` | `deploy/minikube/storage/local-path.yaml`; StorageClass `local-path` (node-pinned, Retain, not default) |
 | `postgres.tf` | `cnpg` | cnpg `cloudnative-pg` 0.29.1 (operator 1.30.1) | `cnpg-system` | `deploy/minikube/postgres/operator.yaml` |
 | `postgres.tf` | `postgres-cluster`, `postgres-access` | cnpg `cluster` 0.9.0; local `deploy/minikube/postgres/access` | `postgres-db` | `deploy/minikube/postgres/cluster.yaml` + per-application databases/roles/Secrets from `postgres_databases`; pgAdmin 4 (+ admin Secret `postgres-ui-admin`), TCP route, gateway allowlists (`postgres_allowed_ips`), NetworkPolicies, metrics Service |
+| `argocd.tf` | `argocd` | argo `argo-cd` 10.10.5 (Argo CD v3.5.5) | `argocd` | `deploy/minikube/argocd/values.yaml`: https://jithendar.com/argocd (VirtualService delegate of the edge routing table, sidecar NetworkPolicy); no Redis of its own, its cache is Valkey tenant `argocd` (database 7, Secret `argocd-redis-valkey`) |
 | `redis.tf` | `valkey`, `redis-access` | cloudpirates `valkey` 0.25.16 (Valkey 9.1, OCI); local `deploy/minikube/redis/access` | `redis` | `deploy/minikube/redis/values.yaml` + post-renderer `postrender-haproxy.sh`; per-application ACL users and Secrets from `redis_tenants`; STRICT mTLS + enforced AuthorizationPolicy, RedisInsight (gateway login `redis-ui-auth`), TCP route, gateway allowlists (`redis_allowed_ips`), NetworkPolicies, metrics Service |
 
 `versions.tf` (providers, S3 backend), `variables.tf` (`kubeconfig_path` `~/.kube/config`, `kube_context` `mk4`,
@@ -141,8 +142,8 @@ application has its own ACL user:
 - Secret `<ns>/redis-<name>-credentials` with `host` (`valkey-master.redis.svc.cluster.local`), `port`, `username`,
   `password`, `db` (its first database), `databases`, `uri` (`redis://<name>:<password>@valkey-master...:6379/<db>`).
 
-Reserved users: `default` (admin: replication, Sentinel, HAProxy checks, exporter) and `console` (RedisInsight: every
-database, no admin command, no flush). Pub/Sub channels are shared by every user (`&*`): channel names are not
+Reserved users: `default` (admin: replication, Sentinel, HAProxy checks, exporter), `console` (RedisInsight: every
+database, no admin command, no flush) and `argocd` (Argo CD, `argocd.tf`: database 7 only, no admin command). Pub/Sub channels are shared by every user (`&*`): channel names are not
 isolated, keys are. Adding or changing a tenant rolls the StatefulSet (primary handed over first).
 
 | Tenant (`redis_tenants`) | Namespace | Databases | Used by (reads `redis-<name>-credentials`) | Replaced |
@@ -150,10 +151,29 @@ isolated, keys are. Adding or changing a tenant rolls the StatefulSet (primary h
 | `jithendar` | `jithendar` | 0 | site cache, sessions, rate limits: `REDIS_URL` = `uri` (jithendar.com `minikube/30-jithendar-com.yaml`) | `jithendar-redis` |
 | `practice` | `jithendar` | 1 | practice executor queue: `EXECUTOR_REDIS_URL` = `uri` (jithendar.com `minikube/practice-executor-40-executor.yaml`) | `practice-redis` |
 | `harbor` | `harbor` | 2 core, 3 jobservice, 4 registry, 5 trivy | `password` (miniKube `deploy/minikube/harbor/values.yaml`) | `harbor-redis` databases 0, 1, 2, 5 |
+| `argocd` (built in, `argocd.tf`) | `argocd` | 7 | Argo CD's cache: server, repo-server, application controller (`externalRedis`, Secret `argocd-redis-valkey` with `redis-username`/`redis-password`; `configs.params.redis.db`) | `argocd-redis` |
 | `roboshop` | `roboshop-ai` | 6 | cart-service, shipping-service: host/port/username/password/db (roboshop-ai `argocd-minikube`) | `roboshop-ai/redis` |
 
 No application on mk4 runs a Redis of its own any more.
-Argo CD keeps its own `argocd-redis`: the GitOps controller must not depend on an application it deploys.
+Argo CD included: Valkey is a Terraform release, not an Argo CD Application, so the GitOps controller never depends on
+something it deploys. Every key Argo CD writes has a TTL, so `volatile-lru` may evict it; Argo CD recomputes it.
+
+## Argo CD
+
+`argocd.tf`, release `argocd` in namespace `argocd` (in the mesh: Valkey is STRICT mTLS), at https://jithendar.com/argocd
+(admin password: `kubectl --context mk4 -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d`).
+`scripts/argocd/deploy.py` and `bootstrap-cluster.sh` no longer install it; they only check it is there.
+
+Adopting an Argo CD installed earlier by `deploy.py` (Helm release `argocd`, own `argocd-redis`), once:
+
+```bash
+cd minikube-infrastructure
+terraform import -var-file=vars/mk4.tfvars kubernetes_namespace_v1.argocd argocd
+terraform import -var-file=vars/mk4.tfvars helm_release.argocd argocd/argocd
+terraform apply -var-file=vars/mk4.tfvars   # rolls Valkey (new ACL user), then upgrades Argo CD: argocd-redis is removed
+```
+
+Argo CD's cache starts empty on Valkey: the first refresh of each application recomputes its manifests.
 
 **Memory.** `maxmemory 512mb`, `maxmemory-policy volatile-lru`: only keys with a TTL are evicted (caches, sessions),
 never queue entries (Harbor jobservice, the practice executor). When memory is full of keys without a TTL, writes fail
@@ -239,7 +259,7 @@ Checks without a cluster: `terraform init -backend=false && terraform validate &
 `python3 -m pytest tests` from the repository root (renders every local chart).
 
 Fresh cluster order: `./deploy-minikube.sh`, then this root (with `adopt_existing_traefik = false`; Traefik first,
-because the Loki and Prometheus charts use its Middleware CRD), then `./bootstrap-cluster.sh` (Argo CD and its ingress).
+because the Loki and Prometheus charts use its Middleware CRD), then `./bootstrap-cluster.sh` (application secrets and pull credentials; Argo CD itself is `argocd.tf`).
 
 ## CI
 

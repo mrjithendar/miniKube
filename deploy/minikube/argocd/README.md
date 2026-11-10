@@ -1,61 +1,56 @@
-> Deployment-script cleanup: imperative application deployment commands in this
-> document are retired. Use the Argo CD catalog and the five supported commands
-> documented in `docs/operations/scripts.md`. Historical examples below are not
-> runnable deployment instructions.
-
 # Argo CD at https://jithendar.com/argocd/
 
-From the repository root:
+Installed by Terraform: release `argocd` (chart `argo-cd` 10.10.5) in namespace `argocd`,
+[`minikube-infrastructure/argocd.tf`](../../../minikube-infrastructure/argocd.tf), values in `values.yaml` here.
 
 ```bash
-bash deploy/minikube/deploy-argocd.sh
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars
 ```
 
-Uses the existing Minikube context `mk4` (including the installer's saved profile),
-Traefik and `letsencrypt-prod`. Override context with `KUBE_CONTEXT=your-context`.
-The existing dependency installer verifies/installs Helm and kubectl when needed.
-DNS must point jithendar.com to the server, with ports 80/443 exposed to Traefik.
+`./bootstrap-cluster.sh` and `./deploy-argocd.sh` no longer install it; they stop with an error if it is missing.
 
-The script installs/updates pinned chart 10.10.5 in namespace `argocd`, then applies
-HTTPS ingress and a namespace-local Certificate. It submits changes without waiting
-for rollout or certificate issuance. It does not change WordPress, Grafana or
-RoboShop routes, reset credentials or configure automatic application syncing.
+## Redis
 
-Sign in as `admin`. Retrieve the initial password after the server starts:
+Argo CD runs no Redis pod. Its cache is on the shared Valkey in namespace `redis`
+([redis.tf](../../../minikube-infrastructure/redis.tf)):
+
+| | |
+|---|---|
+| Address | `valkey-master.redis.svc.cluster.local:6379` (HAProxy to the current primary; failovers keep the address) |
+| Login | ACL user `argocd`, Secret `argocd/argocd-redis-valkey` (`redis-username`, `redis-password`), written by Terraform |
+| Database | 7 only (`configs.params.redis.db`); no admin command, no FLUSHALL |
+| Transport | Istio mTLS: namespace `argocd` is meshed (`istio-injection=enabled`) and admitted by Valkey's AuthorizationPolicy |
+
+Database 7 and the name `argocd` are reserved in `redis_tenants`. Every cache key has a TTL, so Valkey's `volatile-lru`
+may evict it under memory pressure; Argo CD recomputes it.
+
+## Access
+
+The Istio gateway terminates TLS and routes `/argocd` (edge routing table, delegate `argocd/argocd`) to the
+VirtualService rendered from `extraObjects` in `values.yaml`. Argo CD serves plain HTTP under `/argocd` itself
+(`server.rootpath`, `server.basehref`); do not strip the prefix.
+
+Sign in as `admin`:
 
 ```bash
 kubectl --context=mk4 -n argocd get secret argocd-initial-admin-secret \
   -o jsonpath='{.data.password}' | base64 --decode; echo
 ```
 
-Change the initial password in Argo CD's User Info page. The initial secret is not
-the current password after a password change; the script never prints it itself.
-Anonymous access is disabled. Argo CD has cluster management permissions, so only
-trusted administrators should receive access.
-
-Optional CLI login (uses gRPC-Web for the shared HTTPS subpath):
+Change it on the User Info page afterwards. Anonymous access is disabled. CLI:
 
 ```bash
 argocd login jithendar.com --grpc-web --grpc-web-root-path /argocd --username admin
 ```
 
-TLS terminates at Traefik. Argo CD serves HTTP internally, with both rootpath and
-basehref set to `/argocd`. Do not add StripPrefix middleware. A certificate exists
-in `argocd` because Kubernetes Ingress cannot reference another namespace's TLS
-Secret; this does not replace the certificates owned by other applications.
-
-Troubleshooting:
+## Troubleshooting
 
 ```bash
-kubectl --context=mk4 -n argocd get pods,ingress,certificate
-kubectl --context=mk4 -n argocd describe certificate jithendar-com
-kubectl --context=mk4 -n argocd logs deployment/argocd-server --tail=100
+kubectl --context=mk4 -n argocd get pods,virtualservice
+kubectl --context=mk4 -n argocd logs deployment/argocd-server --tail=100 | grep -i redis
 ```
 
-A pending certificate requires working DNS, public port 80 and a ready issuer.
-A 503 usually means argocd-server is still starting; check pods and logs. A redirect
-loop or missing assets means rootpath/basehref or ingress prefix handling differs
-from these values. The Helm install is single-replica for development; controller
-and repo-server memory limits are each 1 GiB.
-
-Reference: [official Argo CD subpath ingress guidance](https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/).
+`WRONGPASS` or `NOPERM`: the ACL user is not loaded yet (Valkey rolls after a tenant change) or `redis.db` is not 7.
+Connection reset before any reply: the pod has no Istio sidecar (restart it after labelling the namespace) or namespace
+`argocd` is missing from the `redis-access` release's `clientNamespaces`. A 503 at /argocd means argocd-server is still
+starting.

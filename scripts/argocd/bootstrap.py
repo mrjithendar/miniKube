@@ -14,7 +14,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 APP = Path(os.environ.get('ROBOSHOP_AI_DIR', ROOT.parent / 'roboshop-ai')).resolve()
 # Istio and cert-manager are not here: minikube-infrastructure/ (Terraform) installs them with the other add-ons,
-# before this script. Argo CD's route is an Istio VirtualService (deploy/minikube/argocd), routed by the gateway.
+# before this script, and Argo CD too (argocd.tf, on the shared Valkey); this script only checks for it.
 EDGE_PREREQUISITES = (('crd', 'virtualservices.networking.istio.io'), ('crd', 'gateways.networking.istio.io'))
 
 
@@ -127,7 +127,7 @@ def main():
         print('Create missing internal roboshop-secrets; preserve existing credentials.')
         print(f'Context {args.context}: refresh ECR credentials in managed namespaces (excluding kube-system).')
         if not args.pull_secrets_only:
-            print('Then Argo CD -> Argo CD ingress (the Istio gateway, cert-manager and the add-ons come first: minikube-infrastructure/)')
+            print('Then verify Argo CD (a Terraform release with its /argocd route: minikube-infrastructure/argocd.tf)')
         if args.schedule_pull_secrets:
             print('Install six-hour ECR refresh CronJob; requires AWS keys in roboshop-secrets.')
         if args.deploy_apps:
@@ -170,9 +170,8 @@ def main():
         if not read('get', kind, name, '--ignore-not-found', '-o', 'name').strip():
             raise RuntimeError(f'{kind}/{name} not found: Istio is a Terraform release. Run '
                                'terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars first.')
-    # Reuse the existing pinned, Helm-version-compatible Argo installer.
+    # Argo CD and its /argocd route are a Terraform release (minikube-infrastructure/argocd.tf): verified, not installed.
     subprocess.check_call([sys.executable, str(ROOT / 'scripts/argocd/deploy.py'), 'install', '--context', args.context, '--timeout', str(args.timeout)])
-    subprocess.check_call(kube + ['apply', '-k', str(ROOT / 'deploy/minikube/argocd')])
     print('Argo CD and its route are ready. Public HTTPS still requires host ports 80/443 (expose-ingress.sh) and the '
           'shared certificate.')
     if args.deploy_apps:

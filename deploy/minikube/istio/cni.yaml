@@ -1,0 +1,6 @@
+# Values for istio-release cni 1.30.7 (minikube-infrastructure/istio.tf) on mk4, the k3s cluster on Hetzner Cloud.
+# k3s keeps its CNI config and plugins under /var/lib/rancher/k3s, not /etc/cni/net.d and /opt/cni/bin (the chart
+# defaults, which matched minikube). Wrong paths leave the agent running while meshed pods get no traffic redirection.
+cni:
+  cniConfDir: /var/lib/rancher/k3s/agent/etc/cni/net.d
+  cniBinDir: /var/lib/rancher/k3s/data/cni

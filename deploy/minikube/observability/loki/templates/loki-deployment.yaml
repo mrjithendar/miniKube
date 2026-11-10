@@ -18,9 +18,6 @@ spec:
       labels:
         app: loki
     spec:
-      # Minikube hostPath data lives on this node; move only together with the data.
-      nodeSelector:
-        kubernetes.io/hostname: mk4-m02
       securityContext:
         runAsUser: 10001
         runAsGroup: 10001

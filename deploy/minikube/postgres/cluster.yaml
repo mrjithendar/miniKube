@@ -18,7 +18,9 @@ version:
 mode: standalone
 
 cluster:
-  instances: 3
+  # One instance on the k3s mk4 (two workers, budget): no replica, so no automatic failover. Back to 3 needs a third
+  # worker (podAntiAffinityType required: one instance per node).
+  instances: 1
   imagePullPolicy: Always
   storage:
     # Every application's data, three times (one copy per instance). On 2026-11-09 the four application databases
@@ -40,7 +42,8 @@ cluster:
   primaryUpdateStrategy: unsupervised
   primaryUpdateMethod: switchover
   enableSuperuserAccess: true
-  enablePDB: true
+  # A PDB on a single instance would block every node drain (k3s upgrades included).
+  enablePDB: false
   initdb:
     database: app
     owner: app

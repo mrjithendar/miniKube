@@ -9,12 +9,13 @@ The self-hosted cluster: Argo CD hub, and the Terraform-managed Traefik and add-
 | `observability/` | Prometheus chart, Grafana values and dashboards chart, Loki and Alloy, OpenTelemetry collector, Jaeger (local Helm charts) | Terraform, [`minikube-infrastructure/`](../../minikube-infrastructure/README.md) |
 | `cert-manager/`, `metrics-server/`, `istio/` | cert-manager values and Let's Encrypt chart, metrics-server values, Istio and Kiali values | Terraform, `minikube-infrastructure/` |
 | `traefik/` | Traefik values ([README](traefik/README.md)) | Terraform, `minikube-infrastructure/traefik.tf` |
-| `argocd/`, `namespaces/` | Controller values and manifests | `./bootstrap-cluster.sh` |
+| `argocd/` | Argo CD values (also its /argocd VirtualService) | Terraform: `minikube-infrastructure/argocd.tf` |
+| `namespaces/` | Namespace manifests | `./bootstrap-cluster.sh` |
 | `vault/`, `jfrog/`, `ecr-refresh/` | Optional components | Their own scripts and READMEs |
 | `harbor/` | Opt-in private registry ([README](harbor/README.md)) | Argo CD, `applications/optional/harbor.yaml`, by name only |
 | `examples/` | Templates. Nothing applies them. | By hand |
 
-Kustomize stays here: `kubectl apply -k deploy/minikube/argocd` and the catalog in `applications/kustomization.yaml` are part of how this cluster is deployed.
+Kustomize stays here: the catalog in `applications/kustomization.yaml` is part of how this cluster is deployed.
 
 ## Prerequisites
 

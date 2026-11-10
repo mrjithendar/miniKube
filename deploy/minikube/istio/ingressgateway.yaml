@@ -1,11 +1,20 @@
 # Values for istio-release gateway 1.30.7 (minikube-infrastructure/istio.tf): the Istio ingress gateway on mk4.
 # Release name istio-ingressgateway gives the pods the label istio=ingressgateway, the selector Gateway resources use.
-# mk4's public edge. The host's HAProxy (../expose-ingress.sh) forwards 80/443 to the NodePorts 31080/31443 with a
-# PROXY protocol header, which the gateway reads (edge/, EnvoyFilter proxy-protocol); routing, logins and the
-# certificate are in edge/ and in the applications' VirtualServices.
+# mk4's public edge (k3s on Hetzner Cloud). The Hetzner cloud controller turns this Service into load balancer
+# "mk4-edge" (LB11) that sends 80/443 to the nodes with a PROXY protocol header, which the gateway reads (edge/,
+# EnvoyFilter proxy-protocol); routing, logins and the certificate are in edge/ and in the applications'
+# VirtualServices. jithendar.com and *.jithendar.com point at the load balancer's public IPv4.
 service:
-  # Minikube has no load balancer: a LoadBalancer Service would stay <pending> and helm --wait would time out.
-  type: NodePort
+  type: LoadBalancer
+  annotations:
+    load-balancer.hetzner.cloud/name: mk4-edge
+    load-balancer.hetzner.cloud/type: lb11
+    load-balancer.hetzner.cloud/location: fsn1
+    # Targets the nodes on the private network (10.0.0.0/16), not their public IPs.
+    load-balancer.hetzner.cloud/use-private-ip: "true"
+    load-balancer.hetzner.cloud/uses-proxyprotocol: "true"
+    load-balancer.hetzner.cloud/disable-private-ingress: "true"
+    load-balancer.hetzner.cloud/ipv6-disabled: "false"
   ports:
     - name: status-port
       port: 15021

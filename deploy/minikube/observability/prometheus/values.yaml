@@ -100,6 +100,5 @@ extraScrapeConfigs:
     static_configs:
       - targets: ["jaeger.observability.svc.cluster.local:8888"]
 
-# Minikube hostPath data lives on this node; move only together with the data.
-nodeSelector:
-  kubernetes.io/hostname: mk4-m02
+# No node pin: the local-path volume keeps the pod on the node that holds its data.
+nodeSelector: {}

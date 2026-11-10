@@ -169,7 +169,7 @@ def test_default_and_all_include_entire_catalog(arguments, capsys):
 
 def test_status_missing_crd_has_actionable_error_without_mutation():
     with patch('sys.argv', ['deploy', 'status']), patch.object(deploy.subprocess, 'check_output', return_value='') as run:
-        with pytest.raises(RuntimeError, match='deploy-argocd.sh'):
+        with pytest.raises(RuntimeError, match='argocd.tf'):
             deploy.main()
     assert len(run.call_args_list) == 1
     assert 'get' in run.call_args.args[0]
@@ -182,29 +182,19 @@ def test_install_preview_is_offline():
     write.assert_not_called()
 
 
-def test_fresh_install_uses_pinned_chart_and_absolute_values():
-    with patch('sys.argv', ['deploy', 'install', '--context', 'fresh']), patch.object(deploy.shutil, 'which', return_value='/bin/helm'), patch.object(deploy.subprocess, 'check_output', side_effect=['  -A, --all-namespaces list across namespaces', '[]', '', 'established', 'established']), patch.object(deploy.subprocess, 'check_call') as write:
-        deploy.main()
-    command=write.call_args.args[0]
-    assert 'fresh' in command
-    assert deploy.ARGOCD_CHART_VERSION in command
-    assert str(deploy.ROOT / 'deploy/minikube/argocd/values.yaml') in command
-    assert '--wait' in command
-    assert command[command.index('--repo') + 1] == 'https://argoproj.github.io/argo-helm'
-    assert not any(arg.startswith('oci://') for arg in command)
-
-
 def test_install_reuses_existing_release_without_upgrade():
     with patch('sys.argv', ['deploy', 'install']), patch.object(deploy.shutil, 'which', return_value='/bin/helm'), patch.object(deploy.subprocess, 'check_output', side_effect=['  -a, --all show all releases', '[{"status":"deployed"}]', 'established', 'established']), patch.object(deploy.subprocess, 'check_call') as write:
         deploy.main()
     write.assert_not_called()
 
 
-def test_install_does_not_adopt_unmanaged_crds():
-    with patch('sys.argv', ['deploy', 'install']), patch.object(deploy.shutil, 'which', return_value='/bin/helm'), patch.object(deploy.subprocess, 'check_output', side_effect=['', '[]', 'crd/applications']), patch.object(deploy.subprocess, 'check_call') as write:
-        with pytest.raises(RuntimeError, match='Refusing automatic adoption'):
+def test_missing_release_is_left_to_terraform():
+    # Argo CD is minikube-infrastructure/argocd.tf: never installed here, whatever CRDs exist.
+    with patch('sys.argv', ['deploy', 'install', '--context', 'fresh']), patch.object(deploy.shutil, 'which', return_value='/bin/helm'), patch.object(deploy.subprocess, 'check_output', side_effect=['  -A, --all-namespaces list across namespaces', '[]']) as read, patch.object(deploy.subprocess, 'check_call') as write:
+        with pytest.raises(RuntimeError, match='Terraform release'):
             deploy.main()
     write.assert_not_called()
+    assert all('fresh' in c.args[0] for c in read.call_args_list[1:])
 
 
 @pytest.mark.parametrize('help_text,uses_all', [
@@ -223,25 +213,11 @@ def test_helm_list_version_compatibility_and_pending_release(help_text, uses_all
     write.assert_not_called()
 
 
-def test_missing_controller_installed_before_application_sync():
-    healthy = {'metadata': {'name': 'loki'}, 'spec': {'project': 'mk-platform'},
-               'status': {'operationState': {'phase': 'Succeeded'},
-                          'sync': {'status': 'Synced'}, 'health': {'status': 'Healthy'},
-                          'resources': [{'kind': 'Deployment', 'name': 'loki'}]}}
-    responses = ['', '--all-namespaces', '[]', '', 'established', 'established',
-                 '{"items":[]}', 'appproject/mk-platform', 'created', 'patched',
-                 json.dumps({'items': [healthy]})]
-    with patch('sys.argv', ['deploy', 'loki', '--context', 'fresh']), patch.object(deploy.shutil, 'which', return_value='/bin/helm'), patch.object(deploy.subprocess, 'check_output', side_effect=responses) as read, patch.object(deploy.subprocess, 'check_call') as install:
-        deploy.main()
-    assert len([c for c in install.call_args_list if c.args[0][0] == 'helm']) == 1
-    assert all('fresh' in c.args[0] for c in install.call_args_list)
-    assert any('patch' in call.args[0] for call in read.call_args_list)
-
-
-def test_failed_automatic_install_never_deploys_apps():
-    with patch('sys.argv', ['deploy', 'loki']), patch.object(deploy.shutil, 'which', return_value='/bin/helm'), patch.object(deploy.subprocess, 'check_output', side_effect=['', '', '[]', '']) as read, patch.object(deploy.subprocess, 'check_call', side_effect=deploy.subprocess.CalledProcessError(1, 'helm')):
-        with pytest.raises(deploy.subprocess.CalledProcessError):
+def test_missing_controller_never_deploys_apps():
+    with patch('sys.argv', ['deploy', 'loki']), patch.object(deploy.shutil, 'which', return_value='/bin/helm'), patch.object(deploy.subprocess, 'check_output', side_effect=['', '', '[]']) as read, patch.object(deploy.subprocess, 'check_call') as write:
+        with pytest.raises(RuntimeError, match='Terraform release'):
             deploy.main()
+    write.assert_not_called()
     assert not any('patch' in call.args[0] or 'create' in call.args[0] for call in read.call_args_list)
 
 
@@ -272,7 +248,7 @@ def test_pending_install_reused_only_after_workload_and_crd_checks():
     with patch('sys.argv', ['deploy', 'install']), patch.object(deploy.shutil, 'which', return_value='/bin/helm'), patch.object(deploy.subprocess, 'check_output', side_effect=['', '[{"status":"pending-install"}]'] + ['ready'] * 6) as read, patch.object(deploy.subprocess, 'check_call') as write:
         deploy.main()
     commands = [c.args[0] for c in read.call_args_list]
-    assert len([c for c in commands if 'rollout' in c]) == 4
+    assert len([c for c in commands if 'rollout' in c]) == 3
     assert len([c for c in commands if 'wait' in c]) == 2
     write.assert_not_called()
 

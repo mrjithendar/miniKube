@@ -14,7 +14,6 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts/lib'))
 from repos import CATALOGS, OPTIONAL_ARGOCD  # noqa: E402
-ARGOCD_CHART_VERSION = '10.10.5'
 
 
 def catalog():
@@ -99,9 +98,9 @@ def main():
     if args.dry_run:
         print(f'Context: {args.context}; action: ' + ' '.join(selected))
         if args.apps == ['install']:
-            print(f'Install Argo CD chart {ARGOCD_CHART_VERSION} if absent; reuse existing Helm release. No applications or ingress deployed.')
+            print('Verify the Argo CD Helm release (Terraform: minikube-infrastructure/argocd.tf); never installs or upgrades it.')
         else:
-            print('Install Argo CD if missing, create missing projects/apps, align existing app project/source/destination with Git '
+            print('Require Argo CD (Terraform release), create missing projects/apps, align existing app project/source/destination with Git '
                   '(other settings preserved), sync without pruning, wait for health; apps tracking no resources fail.')
         return
     kube = ['kubectl', '--context', args.context, '--request-timeout=20s', '-n', 'argocd']
@@ -128,23 +127,18 @@ def main():
             if release_status == 'pending-install':
                 print('Helm reports pending-install; verifying existing Argo CD workloads without changing release metadata.')
                 for workload in ('deployment/argocd-server', 'deployment/argocd-repo-server',
-                                 'deployment/argocd-redis', 'statefulset/argocd-application-controller'):
+                                 'statefulset/argocd-application-controller'):
                     run('rollout', 'status', workload, f'--timeout={args.timeout}s')
                 print('Existing controllers are ready. Helm remains pending-install; resolve that release state before future Helm upgrades.')
             print('Reusing existing Argo CD Helm release; values and version unchanged.')
         else:
-            existing = run('get', 'crd', 'applications.argoproj.io', '--ignore-not-found', '-o', 'name')
-            if existing.strip():
-                raise RuntimeError('Argo CD CRDs already exist without the argocd Helm release. Refusing automatic adoption; inspect the existing installation.')
-            subprocess.check_call(helm + [
-                'install', 'argocd', 'argo-cd',
-                '--repo', 'https://argoproj.github.io/argo-helm',
-                '--version', ARGOCD_CHART_VERSION, '--create-namespace',
-                '--values', str(ROOT / 'deploy/minikube/argocd/values.yaml'),
-                '--wait', '--timeout', f'{args.timeout}s'])
+            # Terraform owns the release (minikube-infrastructure/argocd.tf): it creates the Valkey login Argo CD's
+            # cache needs (no argocd-redis pod) and the /argocd route. A plain helm install here would have neither.
+            raise RuntimeError('Argo CD is not installed. It is a Terraform release: run '
+                               'terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars first.')
         for crd in ('applications.argoproj.io', 'appprojects.argoproj.io'):
             run('wait', '--for=condition=Established', f'crd/{crd}', f'--timeout={args.timeout}s')
-        print('Argo CD is installed. Public HTTPS ingress is configured separately.')
+        print('Argo CD is installed (Terraform release; /argocd route included).')
 
     if args.apps == ['install']:
         install_controller()
@@ -152,8 +146,8 @@ def main():
     for crd in ('applications.argoproj.io', 'appprojects.argoproj.io'):
         if not run('get', 'crd', crd, '--ignore-not-found', '-o', 'name').strip():
             if args.apps == ['status']:
-                raise RuntimeError(f'Argo CD is not installed in context {args.context}. Run ./deploy-argocd.sh to install and deploy.')
-            print('Argo CD is missing; installing the controller before deploying applications.')
+                raise RuntimeError(f'Argo CD is not installed in context {args.context}. It is a Terraform release: minikube-infrastructure/argocd.tf.')
+            print('Argo CD CRDs are missing; checking the Helm release before deploying applications.')
             install_controller()
             break
     if args.apps == ['status']:

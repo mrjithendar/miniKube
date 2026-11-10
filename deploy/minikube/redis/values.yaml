@@ -100,9 +100,14 @@ persistentVolumeClaimRetentionPolicy:
   whenDeleted: Retain
   whenScaled: Retain
 
+# k3s on Hetzner has two workers; the third pod runs on the control plane (jithendar-master1, taint
+# CriticalAddonsOnly:NoExecute), so the three Sentinels stay on three nodes and losing any one keeps the quorum of 2.
+tolerations:
+  - {key: CriticalAddonsOnly, operator: Exists, effect: NoExecute}
+
 affinity:
   podAntiAffinity:
-    # minikube nodes have no zone label: spread by node.
+    # No zone labels: spread by node.
     requiredDuringSchedulingIgnoredDuringExecution:
       - topologyKey: kubernetes.io/hostname
         labelSelector:

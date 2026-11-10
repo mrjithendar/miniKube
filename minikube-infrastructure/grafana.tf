@@ -2,7 +2,7 @@
 # Values: deploy/minikube/observability/grafana/values.yaml.
 
 locals {
-  jithendar_dashboards_dir = abspath("${path.module}/${var.jithendar_com_dir}/grafana")
+  jithendar_dashboards_dir = abspath("${path.module}/${var.jithendar_com_dir}/services/grafana")
   jithendar_dashboards = {
     for name in fileset(local.jithendar_dashboards_dir, "*.json") : name => file("${local.jithendar_dashboards_dir}/${name}")
   }

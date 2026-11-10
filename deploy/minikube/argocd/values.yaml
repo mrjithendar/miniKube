@@ -1,4 +1,6 @@
-# TLS terminates at the Istio gateway; do not strip /argocd from upstream requests.
+# Release argocd, namespace argocd, chart argo-cd 10.10.5: minikube-infrastructure/argocd.tf (Terraform).
+# Served at https://jithendar.com/argocd: the gateway terminates TLS and routes /argocd (deploy/minikube/istio/edge,
+# delegate argocd/argocd) to the VirtualService below; do not strip /argocd from upstream requests.
 fullnameOverride: argocd
 configs:
   cm:
@@ -9,6 +11,8 @@ configs:
     server.insecure: true
     server.rootpath: /argocd
     server.basehref: /argocd
+    # Argo CD's database on the shared Valkey: ACL user argocd may open only this one (redis.tf, local.argocd_redis).
+    redis.db: "7"
   rbac:
     policy.default: ''
 server:
@@ -30,13 +34,59 @@ repoServer:
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: '1', memory: 1Gi}
+
+# No Redis of its own: Argo CD's cache is on the shared Valkey in namespace redis (minikube-infrastructure/redis.tf),
+# through valkey-master (HAProxy to the current primary, so failovers keep the address), Istio mTLS on the way.
+# Every key Argo CD writes has a TTL, so maxmemory-policy volatile-lru may evict it; Argo CD then recomputes it.
 redis:
-  resources:
-    requests: {cpu: 50m, memory: 64Mi}
-    limits: {cpu: 250m, memory: 256Mi}
+  enabled: false
+redis-ha:
+  enabled: false
+externalRedis:
+  host: valkey-master.redis.svc.cluster.local
+  port: 6379
+  # redis-username and redis-password of ACL user argocd, written by argocd.tf.
+  existingSecret: argocd-redis-valkey
+
 dex:
   enabled: false
 notifications:
   enabled: false
 applicationSet:
   enabled: false
+
+extraObjects:
+  # /argocd on the Istio gateway: a delegate of the jithendar.com routing table (deploy/minikube/istio/edge). Argo CD
+  # serves under /argocd itself (server.rootpath, server.basehref) in plain HTTP (server.insecure). HTTP to HTTPS is the
+  # Gateway's own redirect.
+  - apiVersion: networking.istio.io/v1
+    kind: VirtualService
+    metadata:
+      name: argocd
+      namespace: argocd
+    spec:
+      http:
+        - name: argocd
+          route:
+            - destination:
+                host: argocd-server.argocd.svc.cluster.local
+                port: {number: 80}
+  # The chart's NetworkPolicies isolate ingress for its pods. Prometheus (namespace monitoring) also needs the
+  # sidecar's ports, or Kiali gets no traffic for argocd: 15020 merged metrics and health, 15090 Envoy's own. Nothing
+  # here is egress-isolated, so the sidecars reach DNS, istiod and Valkey.
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: istio-sidecars
+      namespace: argocd
+    spec:
+      podSelector: {}
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: monitoring
+          ports:
+            - {port: 15020, protocol: TCP}
+            - {port: 15090, protocol: TCP}

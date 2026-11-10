@@ -32,7 +32,8 @@ def test_fresh_install_order_and_context():
     # Istio and cert-manager are Terraform releases (minikube-infrastructure/), never installed here.
     assert not [c for c in commands if c[0] == 'helm']
     assert [c for c in commands if 'install' in c][0][1].endswith('scripts/argocd/deploy.py')
-    assert commands[1][-2:] == ['-k', str(bootstrap.ROOT / 'deploy/minikube/argocd')]
+    # Argo CD and its route are Terraform's (argocd.tf): nothing applied with kubectl.
+    assert not [c for c in commands if 'apply' in c]
     assert 'install' not in commands[-1]
     assert all('fresh' in c for c in commands + [call.args[0] for call in read.call_args_list])
 

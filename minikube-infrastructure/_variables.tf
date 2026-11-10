@@ -86,8 +86,8 @@ variable "redis_tenants" {
   }))
   default = {}
   validation {
-    condition     = alltrue([for name in keys(var.redis_tenants) : can(regex("^[a-z][a-z0-9-]{0,40}$", name)) && !contains(["default", "console"], name)])
-    error_message = "Tenant names: lower case letters, digits and -, starting with a letter, at most 41 characters; \"default\" (admin) and \"console\" (RedisInsight) are reserved."
+    condition     = alltrue([for name in keys(var.redis_tenants) : can(regex("^[a-z][a-z0-9-]{0,40}$", name)) && !contains(["default", "console", "argocd"], name)])
+    error_message = "Tenant names: lower case letters, digits and -, starting with a letter, at most 41 characters; \"default\" (admin), \"console\" (RedisInsight) and \"argocd\" (argocd.tf) are reserved."
   }
   validation {
     condition     = alltrue([for t in values(var.redis_tenants) : length(t.databases) > 0 && alltrue([for d in t.databases : d >= 0 && d <= 31 && floor(d) == d])])
@@ -96,6 +96,10 @@ variable "redis_tenants" {
   validation {
     condition     = length(flatten([for t in values(var.redis_tenants) : t.databases])) == length(distinct(flatten([for t in values(var.redis_tenants) : t.databases])))
     error_message = "A database number belongs to one tenant only."
+  }
+  validation {
+    condition     = length(setintersection(flatten([for t in values(var.redis_tenants) : t.databases]), local.argocd_redis.databases)) == 0
+    error_message = "Database 7 is Argo CD's (argocd.tf, local.argocd_redis)."
   }
 }
 

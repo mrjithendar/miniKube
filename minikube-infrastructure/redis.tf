@@ -3,9 +3,10 @@
 # (https://jithendar.com/redis/ RedisInsight, redis-cli at redis.jithendar.com:443, both behind an IP allowlist).
 # README.md, "Redis (Valkey)".
 #
-# Tenancy: each entry of var.redis_tenants gets an ACL user of the same name that can open only its own database
-# numbers (Valkey 9 ACL "db=") and no admin command (CONFIG, FLUSHALL, SHUTDOWN, REPLICAOF, ACL, MONITOR, ...), a
-# random password kept in this (encrypted) state, and a connection Secret in the application's own namespace:
+# Tenancy: each entry of var.redis_tenants, and Argo CD (argocd.tf), gets an ACL user of the same name that can open
+# only its own database numbers (Valkey 9 ACL "db=") and no admin command (CONFIG, FLUSHALL, SHUTDOWN, REPLICAOF, ACL,
+# MONITOR, ...), a random password kept in this (encrypted) state, and a connection Secret in the application's own
+# namespace:
 #   <namespace>/redis-<name>-credentials: host, port, username, password, db (its first database), databases, uri.
 # The users are "user" lines (password as SHA-256) in valkey.conf. Adding, removing or re-keying one rolls the
 # StatefulSet; each primary hands over to a replica first (Sentinel failover in preStop), so writes pause for about a
@@ -17,9 +18,12 @@ locals {
   redis_host      = "${local.redis_release}-master.${local.redis_namespace}.svc.cluster.local"
   redis_values    = yamldecode(file("${local.minikube}/redis/values.yaml"))
 
+  # Every ACL user: var.redis_tenants plus Argo CD (argocd.tf), which has a Secret of its own in the chart's format.
+  redis_tenants = merge(var.redis_tenants, { argocd = local.argocd_redis })
+
   # Commands no tenant may run: the @admin category and the ones that reach other tenants' databases. FLUSHDB stays:
   # it is limited to the tenant's own database.
-  redis_tenant_acl = { for name, t in var.redis_tenants : name =>
+  redis_tenant_acl = { for name, t in local.redis_tenants : name =>
     "~* &* +@all -@admin -flushall -swapdb db=${join(",", t.databases)}"
   }
   # RedisInsight (access chart): every database, read and write, no admin command and no flush.
@@ -63,7 +67,7 @@ resource "random_password" "redis_console" {
 }
 
 resource "random_password" "redis" {
-  for_each = var.redis_tenants
+  for_each = local.redis_tenants
   length   = 32
   special  = false
 }
@@ -80,11 +84,11 @@ resource "kubernetes_secret_v1" "redis_users" {
   }
   data = merge(
     { default = random_password.redis_admin.result, console = random_password.redis_console.result },
-    { for name, _ in var.redis_tenants : name => random_password.redis[name].result },
+    { for name, _ in local.redis_tenants : name => random_password.redis[name].result },
   )
 }
 
-# What the application mounts. Its namespace must exist before this apply.
+# What the application mounts. Its namespace must exist before this apply. Not for Argo CD (argocd.tf writes its own).
 resource "kubernetes_secret_v1" "redis_app" {
   for_each = var.redis_tenants
   metadata {
@@ -171,7 +175,7 @@ resource "helm_release" "redis_access" {
     file("${local.minikube}/redis/access/values.yaml"),
     yamlencode({
       allowedIps       = var.redis_allowed_ips
-      clientNamespaces = sort(distinct([for t in values(var.redis_tenants) : t.namespace]))
+      clientNamespaces = sort(distinct([for t in values(local.redis_tenants) : t.namespace]))
     }),
     local.chart_checksum["redis/access"],
   ]

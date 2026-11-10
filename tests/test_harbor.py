@@ -23,7 +23,9 @@ def load(name, path):
     return loaded
 
 
-credentials = load('harbor_credentials', HARBOR / 'credentials.py')
+# harbor-credentials, as harbor.tf generates it: the keys of local.harbor_credential_lengths plus the htpasswd line.
+TF_CREDENTIAL_KEYS = set(re.findall(r'^    (\w+)\s+= \d+$', TERRAFORM.split('harbor_credential_lengths = {')[1].split('}')[0], re.M)) | {'REGISTRY_HTPASSWD'}
+TF_REGISTRY_USER = re.search(r'harbor_registry_user = "([^"]+)"', TERRAFORM).group(1)
 deploy = load('harbor_deploy', ROOT / 'scripts/argocd/deploy.py')
 
 
@@ -53,9 +55,12 @@ def test_harbor_is_a_terraform_release_not_an_argo_cd_application():
     assert not (HARBOR / 'manifests').exists()
     assert 'repository = "https://helm.goharbor.io"' in TERRAFORM and 'version    = "1.19.4"' in TERRAFORM
     assert 'chart     = "${local.minikube}/harbor/access"' in TERRAFORM
-    # Prerequisites are checked before anything is installed.
-    assert 'contains(local.harbor_secrets, "harbor-credentials")' in TERRAFORM
-    assert 'contains(local.harbor_secrets, "dockerhub-pull")' in TERRAFORM
+    # No script runs first: Terraform creates the namespace (in the mesh) and both Secrets.
+    assert 'resource "kubernetes_namespace_v1" "harbor"' in TERRAFORM and '"istio-injection"           = "enabled"' in TERRAFORM
+    assert 'resource "kubernetes_secret_v1" "harbor_credentials"' in TERRAFORM
+    assert 'resource "kubernetes_secret_v1" "harbor_dockerhub_pull"' in TERRAFORM
+    assert 'harbor' not in load('harbor_create_secrets', ROOT / 'scripts/setup/create_secrets.py').TARGETS
+    assert not (HARBOR / 'credentials.py').exists()
 
 
 def test_namespace_manifest_matches_deploy_contract():
@@ -114,7 +119,7 @@ def test_chart_images_are_the_tags_the_script_pushes():
         assert component in pushed and tag_version == version, image
     assert repo == 'jithendar/custom-harbour'
     assert '"$IMAGE_REPO:$image-$HARBOR_VERSION"' in SCRIPT
-    assert VALUES['imagePullSecrets'] == [{'name': re.search(r'^PULL_SECRET=(\S+)', SCRIPT, re.M).group(1)}]
+    assert VALUES['imagePullSecrets'] == [{'name': re.search(r'name      = "(dockerhub-pull)"', TERRAFORM).group(1)}]
     assert VALUES['metrics']['enabled'] is False and VALUES['trivy']['enabled'] is False
 
 
@@ -123,10 +128,11 @@ def test_script_pins_source_refuses_the_cluster_host_and_leaves_the_deploy_to_te
     assert '[ "$(git -C "$WORK/harbor" rev-parse HEAD)" = "$HARBOR_COMMIT" ]' in SCRIPT
     assert "grep -qx mk4" in SCRIPT and "'{{.Server.Arch}}')\" = arm64" in SCRIPT
     assert 'PULL_BASE_FROM_DOCKERHUB=false' in SCRIPT and 'make/photon/common/Dockerfile' in SCRIPT
-    assert '--services harbor --apply' in SCRIPT and 'terraform -chdir="$ROOT/minikube-infrastructure" apply -var-file=vars/mk4.tfvars' in SCRIPT
+    assert 'terraform -chdir="$ROOT/minikube-infrastructure" apply -var-file=vars/mk4.tfvars' in SCRIPT
+    assert 'create-secrets' not in SCRIPT
     assert 'scripts/argocd/deploy.py' not in SCRIPT
-    # The Docker Hub token goes to kubectl on stdin, never argv.
-    assert 'DOCKERHUB_TOKEN="$token" python3 -c' in SCRIPT and '--docker-password' not in SCRIPT
+    # The Docker Hub token reaches Terraform through the environment, never argv.
+    assert 'TF_VAR_dockerhub_password' in SCRIPT and '--docker-password' not in SCRIPT
     subprocess.run(['bash', '-n', str(HARBOR / 'deploy-harbor.sh')], check=True)
     assert not (HARBOR / 'build-images.sh').exists()
 
@@ -167,7 +173,7 @@ def references_to(secret):
 
 
 def test_every_chart_credential_is_external_and_provisioned():
-    secret = credentials.NAME
+    secret = 'harbor-credentials'
     assert VALUES['existingSecretAdminPassword'] == VALUES['existingSecretSecretKey'] == secret
     assert VALUES['core']['existingSecret'] == VALUES['core']['existingXsrfSecret'] == secret
     assert VALUES['jobservice']['existingSecret'] == VALUES['registry']['existingSecret'] == secret
@@ -175,13 +181,12 @@ def test_every_chart_credential_is_external_and_provisioned():
     # The database password is the shared PostgreSQL tenant's (postgres.tf), not Harbor's own.
     assert VALUES['database']['external']['existingSecret'] == 'postgres-db-credentials'
     assert VALUES['core']['secretName'] == by_name('Certificate')['harbor-token']['spec']['secretName']
-    assert VALUES['registry']['credentials']['username'] == credentials.REGISTRY_USER
-    # Chart-defined key names (values.yaml comments) plus every secretKeyRef. "password" was harbor-postgres's;
-    # create-secrets.sh still writes it so existing Secrets stay complete, and nothing reads it.
+    assert VALUES['registry']['credentials']['username'] == TF_REGISTRY_USER
+    # Chart-defined key names (values.yaml comments) plus every secretKeyRef: exactly what harbor.tf writes.
     chart_keys = {VALUES['existingSecretAdminPasswordKey'], 'secretKey', 'secret', VALUES['core']['existingXsrfSecretKey'],
                   VALUES['jobservice']['existingSecretKey'], VALUES['registry']['existingSecretKey'],
-                  'REGISTRY_PASSWD', 'REGISTRY_HTPASSWD', 'password'}
-    assert chart_keys | references_to(secret) == set(credentials.KEYS)
+                  'REGISTRY_PASSWD', 'REGISTRY_HTPASSWD'}
+    assert chart_keys | references_to(secret) == TF_CREDENTIAL_KEYS
     # Never set in Git.
     assert 'harborAdminPassword' not in VALUES and 'secretKey' not in VALUES
     assert VALUES['redis']['external']['password'] == '' and 'existingSecret' not in VALUES['redis']['external']
@@ -250,78 +255,4 @@ def test_backup_is_suspended_and_dumps_before_copying():
             for e in c.get('env', []) for r in [e.get('valueFrom', {})] if 'secretKeyRef' in r}
     assert not {k for n, k in refs if n == 'harbor-credentials'}
     assert {k for n, k in refs if n == 'postgres-db-credentials'} == {'direct-host', 'username', 'dbname', 'password'}
-
-
-def test_generated_credentials_meet_harbor_rules():
-    with patch.object(credentials, 'htpasswd', return_value='harbor_registry_user:$2y$10$hash'):
-        values = credentials.generate()
-    assert set(values) == set(credentials.KEYS)
-    assert len(values['secretKey']) == 16 and len(values['CSRF_KEY']) == 32
-    admin = values['HARBOR_ADMIN_PASSWORD']
-    assert re.search('[A-Z]', admin) and re.search('[a-z]', admin) and re.search('[0-9]', admin) and 8 <= len(admin) <= 128
-    secrets_only = [v for k, v in values.items() if k != 'REGISTRY_HTPASSWD']
-    assert len(set(secrets_only)) == len(secrets_only)
-
-
-def test_htpasswd_reads_the_password_from_stdin():
-    with patch.object(credentials.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'u:$2y$10$x\n')) as run:
-        assert credentials.htpasswd('u', 'topsecret') == 'u:$2y$10$x'
-    assert 'topsecret' not in ' '.join(run.call_args.args[0])
-    assert run.call_args.kwargs['input'] == 'topsecret\n'
-    assert run.call_args.args[0][:2] == ['htpasswd', '-niB']
-
-
-def fake_kubectl(secret, pvcs=()):
-    def check_output(command, text=True):
-        if 'secret' in command:
-            return json.dumps(secret) if secret else ''
-        return json.dumps({'items': list(pvcs)})
-    return check_output
-
-
-def test_existing_credentials_are_reused():
-    secret = {'data': {k: 'eA==' for k in credentials.KEYS}}
-    with patch.object(credentials.subprocess, 'check_output', side_effect=fake_kubectl(secret)), \
-            patch.object(credentials.subprocess, 'run') as run:
-        credentials.ensure('mk4')
-    run.assert_not_called()
-
-
-def test_partial_credentials_are_not_rotated():
-    with patch.object(credentials.subprocess, 'check_output', side_effect=fake_kubectl({'data': {'password': 'eA=='}})), \
-            patch.object(credentials.subprocess, 'run') as run:
-        with pytest.raises(RuntimeError, match='incomplete'):
-            credentials.ensure('mk4')
-    run.assert_not_called()
-
-
-def test_missing_credentials_with_volumes_stop_before_writing():
-    with patch.object(credentials.subprocess, 'check_output', side_effect=fake_kubectl(None, [{'metadata': {}}])), \
-            patch.object(credentials.subprocess, 'run') as run:
-        with pytest.raises(RuntimeError, match='Restore the original'):
-            credentials.ensure('mk4')
-    run.assert_not_called()
-
-
-def test_new_credentials_go_to_kubectl_on_stdin():
-    with patch.object(credentials.subprocess, 'check_output', side_effect=fake_kubectl(None)), \
-            patch.object(credentials.shutil, 'which', return_value='/usr/sbin/htpasswd'), \
-            patch.object(credentials, 'htpasswd', return_value='harbor_registry_user:$2y$10$hash'), \
-            patch.object(credentials.subprocess, 'run') as run:
-        credentials.ensure('mk4')
-    command, kwargs = run.call_args.args[0], run.call_args.kwargs
-    document = json.loads(kwargs['input'])
-    assert command[-3:] == ['create', '-f', '-'] and '--context=mk4' in command
-    assert document['metadata'] == {'name': 'harbor-credentials', 'namespace': 'harbor', 'labels': {'app.kubernetes.io/part-of': 'harbor'}}
-    assert not any(value in ' '.join(command) for value in document['stringData'].values())
-    assert kwargs['stdout'] == kwargs['stderr'] == subprocess.DEVNULL   # kubectl errors can echo the object
-
-
-def test_create_secrets_offers_harbor(capsys):
-    create = load('harbor_create_secrets', ROOT / 'scripts/setup/create_secrets.py')
-    assert create.TARGETS['harbor'] == ('harbor', 'harbor-credentials')
-    with patch.object(create.subprocess, 'run') as run:
-        create.main(['--services', 'harbor'])
-    run.assert_not_called()
-    assert 'harbor/harbor-credentials: preserve existing' in capsys.readouterr().out
 

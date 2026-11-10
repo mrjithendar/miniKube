@@ -16,13 +16,6 @@ mock_provider "kubernetes" {
       }
     }
   }
-  # Harbor's prerequisites (create-secrets.sh, deploy-harbor.sh).
-  override_data {
-    target = data.kubernetes_resources.harbor_prerequisites
-    values = {
-      objects = [{ metadata = { name = "harbor-credentials" } }, { metadata = { name = "dockerhub-pull" } }]
-    }
-  }
 }
 mock_provider "random" {}
 
@@ -30,6 +23,8 @@ mock_provider "random" {}
 variables {
   postgres_allowed_ips = ["192.0.2.1/32"]
   redis_allowed_ips    = ["192.0.2.1/32"]
+  dockerhub_username   = "ci"
+  dockerhub_password   = "token"
 }
 
 run "pinned_releases" {
@@ -326,8 +321,11 @@ run "harbor_on_the_shared_databases" {
       helm_release.harbor.repository == "https://helm.goharbor.io" &&
       helm_release.harbor.namespace == "harbor" &&
       helm_release.harbor_access.namespace == "harbor" &&
-      kubernetes_labels.harbor_namespace.metadata[0].name == "harbor" &&
-      kubernetes_labels.harbor_namespace.labels["istio-injection"] == "enabled" &&
+      kubernetes_namespace_v1.harbor.metadata[0].labels["istio-injection"] == "enabled" &&
+      kubernetes_secret_v1.harbor_dockerhub_pull.type == "kubernetes.io/dockerconfigjson" &&
+      random_password.harbor["secretKey"].length == 16 &&
+      random_password.harbor["HARBOR_ADMIN_PASSWORD"].min_upper == 1 &&
+      kubernetes_secret_v1.harbor_credentials.metadata[0].name == "harbor-credentials" &&
       yamldecode(helm_release.harbor.values[0]).database.external.host == local.postgres_pool_host &&
       yamldecode(helm_release.harbor.values[0]).database.external.existingSecret == "postgres-db-credentials" &&
       yamldecode(helm_release.harbor.values[0]).redis.external.addr == "${local.redis_host}:6379" &&
@@ -335,4 +333,14 @@ run "harbor_on_the_shared_databases" {
     )
     error_message = "Harbor is pinned, in the mesh, uses the shared PostgreSQL (tenant registry) and Valkey (tenant harbor), on local-path."
   }
+}
+
+run "harbor_without_docker_hub_login_fails" {
+  command = plan
+
+  variables {
+    dockerhub_password = ""
+  }
+
+  expect_failures = [kubernetes_secret_v1.harbor_dockerhub_pull]
 }

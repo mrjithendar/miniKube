@@ -112,3 +112,16 @@ variable "redis_allowed_ips" {
     error_message = "Each entry must be a CIDR, e.g. 203.0.113.7/32."
   }
 }
+
+variable "dockerhub_username" {
+  description = "Docker Hub user for Harbor's private arm64 images (harbor.tf, Secret harbor/dockerhub-pull). CI: repository secret DOCKER_USERNAME; locally: export TF_VAR_dockerhub_username."
+  type        = string
+  default     = ""
+}
+
+variable "dockerhub_password" {
+  description = "Docker Hub access token (read-only is enough) for that user. CI: repository secret DOCKER_PASSWORD; locally: export TF_VAR_dockerhub_password. Never in a tfvars file."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

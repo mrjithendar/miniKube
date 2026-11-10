@@ -108,6 +108,9 @@ resource "kubernetes_secret_v1" "redis_app" {
     databases = join(",", each.value.databases)
     uri       = "redis://${each.key}:${random_password.redis[each.key].result}@${local.redis_host}:6379/${each.value.databases[0]}"
   }
+
+  # Namespaces this root creates (Harbor); the others must exist before the apply.
+  depends_on = [kubernetes_namespace_v1.harbor]
 }
 
 # The gateway login for https://jithendar.com/redis/ (edge chart basicAuth "redis"; scripts/istio/gateway-basic-auth.py

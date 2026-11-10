@@ -6,11 +6,11 @@
 #             (image builds there froze the cluster twice: runner/README.md in the tools repository). An Apple Silicon Mac works, and
 #             .github/workflows/build-harbor-images.yml runs this step on GitHub's arm64 runner.
 #   2. push   docker push jithendar/custom-harbour:<component>-v2.15.4 (run "docker login" first)
-#   3. deploy create-secrets.sh (harbor-credentials), Secret dockerhub-pull, then terraform apply (asks to confirm)
+#   3. deploy terraform apply (asks to confirm): namespace, credentials, pull Secret and both releases (harbor.tf)
 #
 # Usage: bash deploy/minikube/harbor/deploy-harbor.sh [--skip-build] [--skip-deploy] [--with-trivy]
 # Env:   IMAGE_REPO (jithendar/custom-harbour), KUBE_CONTEXT (mk4),
-#        DOCKERHUB_USERNAME / DOCKERHUB_TOKEN for the pull Secret (prompted if unset; a read-only access token is enough)
+#        TF_VAR_dockerhub_username / TF_VAR_dockerhub_password for the deploy (Terraform writes the pull Secret)
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -19,7 +19,6 @@ HARBOR_COMMIT=0a6bf30d54e779962ad5b862fc67e3e9f6b010d8   # git rev-parse v2.15.4
 TRIVY_VERSION=v0.75.0                                     # TRIVYVERSION in that tag's Makefile
 IMAGE_REPO="${IMAGE_REPO:-jithendar/custom-harbour}"     # values.yaml: docker.io/jithendar/custom-harbour
 KUBE_CONTEXT="${KUBE_CONTEXT:-mk4}"
-PULL_SECRET=dockerhub-pull                                # values.yaml: imagePullSecrets
 BUILD=true DEPLOY=true WITH_TRIVY=false
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -82,29 +81,8 @@ build_and_push() {
   done
 }
 
-ensure_pull_secret() {
-  if [ -n "$(kubectl --context "$KUBE_CONTEXT" -n harbor get secret "$PULL_SECRET" --ignore-not-found -o name)" ]; then
-    echo "Reusing harbor/$PULL_SECRET (delete it to replace the token)."
-    return
-  fi
-  local user="${DOCKERHUB_USERNAME:-}" token="${DOCKERHUB_TOKEN:-}"
-  [ -n "$user" ] || read -rp 'Docker Hub user for image pulls: ' user
-  [ -n "$token" ] || { read -rsp "Docker Hub access token for $user (read-only is enough): " token; echo; }
-  [ -n "$user" ] && [ -n "$token" ] || fail 'a Docker Hub user and access token are required for the pull Secret'
-  # The token reaches kubectl on stdin, never a command line.
-  DOCKERHUB_USERNAME="$user" DOCKERHUB_TOKEN="$token" python3 -c '
-import base64, json, os
-auth = base64.b64encode((os.environ["DOCKERHUB_USERNAME"] + ":" + os.environ["DOCKERHUB_TOKEN"]).encode()).decode()
-config = json.dumps({"auths": {"https://index.docker.io/v1/": {"auth": auth}}})
-print(json.dumps({"apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/dockerconfigjson",
-                  "metadata": {"name": "'"$PULL_SECRET"'", "namespace": "harbor", "labels": {"app.kubernetes.io/part-of": "harbor"}},
-                  "data": {".dockerconfigjson": base64.b64encode(config.encode()).decode()}}))
-' | kubectl --context "$KUBE_CONTEXT" apply -f - >/dev/null
-  echo "Created harbor/$PULL_SECRET."
-}
-
 deploy() {
-  for command in kubectl python3 terraform; do
+  for command in kubectl terraform; do
     command -v "$command" >/dev/null || fail "$command is required to deploy"
   done
   if command -v docker >/dev/null; then
@@ -114,9 +92,8 @@ deploy() {
     done
   fi
 
-  step "Credentials"
-  "$ROOT/create-secrets.sh" --context "$KUBE_CONTEXT" --services harbor --apply
-  ensure_pull_secret
+  [ -n "${TF_VAR_dockerhub_username:-}" ] && [ -n "${TF_VAR_dockerhub_password:-}" ] ||
+    fail 'export TF_VAR_dockerhub_username and TF_VAR_dockerhub_password (a read-only Docker Hub token) first'
 
   step "Terraform: releases harbor-access and harbor (minikube-infrastructure/harbor.tf)"
   # The root also pulls OCI charts (Valkey, CloudNativePG); an empty Docker config keeps a docker credsStore helper
@@ -125,7 +102,7 @@ deploy() {
   kubectl --context "$KUBE_CONTEXT" -n harbor get pods,pvc,certificate,virtualservice
   echo
   echo 'Admin password: kubectl --context '"$KUBE_CONTEXT"' -n harbor get secret harbor-credentials -o jsonpath='"'"'{.data.HARBOR_ADMIN_PASSWORD}'"'"' | base64 -d'
-  echo 'Back up harbor-credentials off-host now (README.md "Backup and restore").'
+  echo 'Back up harbor-credentials off-host now (README.md "Backup and restore"); it is also in the Terraform state.'
 }
 
 if $BUILD; then build_and_push; fi

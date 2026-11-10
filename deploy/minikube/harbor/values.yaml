@@ -3,24 +3,22 @@
 # Every key below was checked against that chart version's values.yaml and templates. README.md explains the choices.
 #
 # Portal https://registry.jithendar.com/harbor/; https://jithendar.com/harbor redirects there (edge routing table).
-# Deployment prerequisites (README.md "Prerequisites"; harbor.tf refuses to plan without the two Secrets):
-# - the registry hostname's DNS record and the private Docker Hub repository holding the arm64 Harbor images;
-# - Secret harbor/harbor-credentials (./create-secrets.sh --services harbor --apply);
-# - Secret harbor/dockerhub-pull (deploy-harbor.sh --skip-build creates it from a read-only Docker Hub token).
+# Terraform also creates the namespace and Secrets harbor-credentials and dockerhub-pull (harbor.tf). Prerequisites
+# outside this repository: the registry hostname's DNS record and the arm64 images on Docker Hub (README.md).
 #
 # To change the hostname, change externalURL here, host in access/values.yaml and deploy/minikube/istio/edge/values.yaml
 # (gateway.https, the /harbor redirect).
 
 externalURL: https://registry.jithendar.com
 
-# The Istio gateway routes registry.jithendar.com straight to core and portal (manifests/harbor-virtualservice.yaml),
+# The Istio gateway routes registry.jithendar.com straight to core and portal (access/templates/virtualservice.yaml),
 # the paths the chart's Ingress used. clusterIP renders no Ingress; its nginx proxy stays at 0 replicas (below), so
 # the Service "harbor" it adds has no endpoints and nothing uses it. TLS terminates at the gateway.
 expose:
   type: clusterIP
   tls:
     enabled: true
-    # cert-manager issues it: manifests/harbor-public-certificate.yaml. Only the portal's CA download uses it now.
+    # cert-manager issues it: access/templates/public-certificate.yaml. Only the portal's CA download uses it now.
     certSource: secret
     secret:
       secretName: harbor-public-tls
@@ -32,7 +30,7 @@ caSecretName: harbor-public-tls
 # Official goharbor images are amd64-only and every mk4 node is arm64. deploy-harbor.sh builds these from the
 # v2.15.4 source and pushes them to the private Docker Hub repository jithendar/custom-harbour, one tag per
 # component (<component>-v2.15.4). Docker Hub stays reachable when Harbor is not (bootstrap, rebuilds).
-# deploy-harbor.sh creates dockerhub-pull from your Docker Hub user and access token.
+# harbor.tf writes dockerhub-pull from var.dockerhub_username and var.dockerhub_password.
 imagePullSecrets:
 - name: dockerhub-pull
 
@@ -57,7 +55,7 @@ persistence:
     filesystem:
       rootdirectory: /storage
 
-# Credentials come from harbor/harbor-credentials (create_secrets.py): any value the chart would otherwise generate
+# Credentials come from harbor/harbor-credentials (harbor.tf, generated once): any value the chart would otherwise generate
 # (randAlphaNum, genCA) would change on every upgrade.
 existingSecretAdminPassword: harbor-credentials
 existingSecretAdminPasswordKey: HARBOR_ADMIN_PASSWORD
@@ -125,7 +123,7 @@ core:
   existingSecret: harbor-credentials
   existingXsrfSecret: harbor-credentials
   existingXsrfSecretKey: CSRF_KEY
-  # Token-signing key pair, from cert-manager: manifests/harbor-token-certificate.yaml.
+  # Token-signing key pair, from cert-manager: access/templates/token-certificate.yaml.
   secretName: harbor-token-tls
   resources:
     requests: {cpu: 100m, memory: 256Mi}
@@ -242,7 +240,7 @@ metrics:
   enabled: false
 
 nginx:
-  # expose.type clusterIP renders this proxy; the Istio gateway does its job (manifests/harbor-virtualservice.yaml).
+  # expose.type clusterIP renders this proxy; the Istio gateway does its job (access/templates/virtualservice.yaml).
   # No arm64 image of it is built (deploy-harbor.sh), so it must stay at 0.
   replicas: 0
 

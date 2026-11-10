@@ -14,7 +14,6 @@ TARGETS = {
     'monitoring': ('monitoring', 'monitoring-auth'),
     'wordpress': ('jithendar', 'wordpress-credentials'),
     'jfrog': ('jfrog', 'jfrog-bootstrap'),
-    'harbor': ('harbor', 'harbor-credentials'),
 }
 WP_KEYS = ('database-password', 'database-root-password', 'redis-password', 'admin-password')
 
@@ -71,8 +70,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--context', default='mk4')
     parser.add_argument('--services', nargs='+', choices=TARGETS, default=['roboshop', 'monitoring', 'wordpress'],
-                        help='Default: roboshop monitoring wordpress; optionally include jfrog or harbor')
-    parser.add_argument('--all', action='store_true', help='Include JFrog and Harbor installation credentials')
+                        help='Default: roboshop monitoring wordpress; optionally include jfrog. Harbor\'s are Terraform\'s (harbor.tf)')
+    parser.add_argument('--all', action='store_true', help='Include JFrog installation credentials')
     parser.add_argument('--apply', action='store_true', help='Create missing credentials (default: offline preview)')
     parser.add_argument('--dry-run', action='store_true', help='Offline preview, even with --apply')
     parser.add_argument('--ecr', action='store_true', help='Also refresh ECR pull secrets using current AWS credentials')
@@ -101,8 +100,6 @@ def main(argv=None):
             create_wordpress(args.context)
         elif target == 'jfrog':
             module('deploy/minikube/jfrog/bootstrap.py').ensure(args.context)
-        elif target == 'harbor':
-            module('deploy/minikube/harbor/credentials.py').ensure(args.context)
     if args.ecr:
         module('scripts/argocd/bootstrap.py').refresh_pull_secrets(args.context)
     print('Done. No workloads restarted and no existing credentials rotated.')

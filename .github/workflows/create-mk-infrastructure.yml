@@ -60,6 +60,9 @@ jobs:
       AWS_REGION: us-east-1
       TF_IN_AUTOMATION: 'true'
       TF_INPUT: 'false'
+      # Harbor's pull Secret for its private arm64 images (minikube-infrastructure/harbor.tf).
+      TF_VAR_dockerhub_username: ${{ secrets.DOCKER_USERNAME }}
+      TF_VAR_dockerhub_password: ${{ secrets.DOCKER_PASSWORD }}
 
     steps:
       # miniKube and jithendar.com side by side, as on a workstation: grafana.tf reads ../jithendar.com/grafana.
@@ -93,10 +96,10 @@ jobs:
           MK4_TERRAFORM_TOKEN: ${{ secrets.MK4_TERRAFORM_TOKEN }}
         run: |
           missing=()
-          for v in MK4_TERRAFORM_ROLE_ARN MK4_API_SERVER MK4_CA_DATA MK4_TERRAFORM_TOKEN; do
+          for v in MK4_TERRAFORM_ROLE_ARN MK4_API_SERVER MK4_CA_DATA MK4_TERRAFORM_TOKEN TF_VAR_dockerhub_username TF_VAR_dockerhub_password; do
             [[ -n "${!v}" ]] || missing+=("$v")
           done
-          [[ ${#missing[@]} -eq 0 ]] || { echo "::error::Not set: ${missing[*]}. Run scripts/setup-minikube-terraform-ci.sh"; exit 1; }
+          [[ ${#missing[@]} -eq 0 ]] || { echo "::error::Not set: ${missing[*]}. Run scripts/setup-minikube-terraform-ci.sh (TF_VAR_dockerhub_*: repository secrets DOCKER_USERNAME, DOCKER_PASSWORD)"; exit 1; }
 
       - name: AWS credentials (state only)
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0

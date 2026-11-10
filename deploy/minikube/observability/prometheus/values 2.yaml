@@ -1,0 +1,105 @@
+image: prom/prometheus:v3.16.0
+storage: 5Gi
+# Minikube hostPath-backed storage may not apply fsGroup ownership automatically.
+volumePermissions:
+  enabled: true
+  image: busybox:1.38.0
+retentionTime: 7d
+retentionSize: 4GB
+# Discover nodes and collect kubelet/container metrics through the authenticated API proxy.
+kubernetesMetrics:
+  enabled: true
+# Scrape istiod and the Istio sidecars for Kiali; adds pod list/watch to the ClusterRole (needs kubernetesMetrics).
+istioMetrics:
+  enabled: true
+# Accept metrics pushed from clusters this Prometheus cannot reach. The Secret is created by hand: see README.
+remoteWrite:
+  enabled: true
+  secretName: prometheus-remote-write-auth
+# Add Kubernetes-reachable scrape jobs here. Use Kubernetes service DNS names.
+# Only services whose /metrics endpoint answers are listed; files/alerts.yml uses these job names.
+extraScrapeConfigs:
+  # RoboShop (roboshop-ai) is not on mk4 since the EKS move; its scrape job and alerts were removed 2026-11-03
+  # because every target was down and RoboShopServiceDown fired forever. Restore both if it comes back.
+  # jithendar.com: every site pod, found through the headless Service jithendar-com-metrics (DNS A records),
+  # so no Kubernetes API permissions are needed. Port 9464 is cluster-internal (NetworkPolicy in that repo).
+  - job_name: jithendar-com
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names: ["jithendar-com-metrics.jithendar.svc.cluster.local"]
+        type: A
+        port: 9464
+    relabel_configs:
+      - target_label: service
+        replacement: jithendar-com
+  # MOKS (namespace moks): api, worker, executor and terminal pods through the headless Service moks-metrics.
+  # The moks NetworkPolicy admits the monitoring namespace on 9464 only. Same block as moks
+  # deploy/grafana/prometheus-scrape.yaml; alerts in files/alerts.yml (groups moks-*).
+  - job_name: moks
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names: ["moks-metrics.moks.svc.cluster.local"]
+        type: A
+        port: 9464
+    relabel_configs:
+      - target_label: service
+        replacement: moks
+  # CloudNativePG cluster (namespace postgres-db): every instance's exporter (container port "metrics", :9187), found
+  # through the Kubernetes API (pod list/watch, kubernetesMetrics) so each series carries its pod name; PgBouncer pods
+  # (cnpg.io/podRole=pooler) have no exporter on that port. cnpg_pg_replication_lag and cnpg_collector_up are the ones
+  # to watch. The access chart's NetworkPolicy admits monitoring on 9187. Dashboard: Platform / PostgreSQL cluster.
+  - job_name: postgres
+    metrics_path: /metrics
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [postgres-db]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster, __meta_kubernetes_pod_label_cnpg_io_podRole, __meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: postgres-cluster;instance;metrics
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - target_label: service
+        replacement: postgres-cluster
+  # Shared Valkey (namespace redis, deploy/minikube/redis): every pod's redis_exporter (container port 9121), found
+  # through the Kubernetes API so each series carries its pod name. The headless Service
+  # valkey-metrics-pods (redis/access) must keep declaring :9121: it is what makes the scrape go out as mTLS (namespace
+  # redis is STRICT). redis_connected_slaves, redis_memory_used_bytes and redis_evicted_keys_total are the ones to
+  # watch. The access chart's AuthorizationPolicy and NetworkPolicy admit monitoring on 9121.
+  # Dashboard: Platform / Redis (Valkey).
+  - job_name: redis
+    metrics_path: /metrics
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [redis]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_container_port_number]
+        action: keep
+        regex: valkey;9121
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - target_label: service
+        replacement: valkey
+  - job_name: loki
+    static_configs:
+      - targets: ["loki.monitoring.svc.cluster.local:3100"]
+  - job_name: alloy
+    static_configs:
+      - targets: ["alloy.monitoring.svc.cluster.local:12345"]
+  # Trace pipeline health: spans accepted/refused/failed by the collector and Jaeger's own receiver and storage.
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector.observability.svc.cluster.local:8888"]
+  - job_name: jaeger
+    static_configs:
+      - targets: ["jaeger.observability.svc.cluster.local:8888"]
+
+# Minikube hostPath data lives on this node; move only together with the data.
+nodeSelector:
+  kubernetes.io/hostname: mk4-m02

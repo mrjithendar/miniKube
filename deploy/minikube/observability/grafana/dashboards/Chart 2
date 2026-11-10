@@ -1,0 +1,5 @@
+apiVersion: v2
+name: grafana-dashboards
+version: 0.1.0
+type: application
+description: ConfigMaps of the Grafana dashboards that Grafana's file provider mounts (folders RoboShop, MOKS, Jithendar.com)

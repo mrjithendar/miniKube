@@ -1,3 +1,5 @@
 # Image reference only, kept here (not in templates/) so Dependabot's helm updater can bump it.
 # Collector configuration stays in collector.yaml.
-image: otel/opentelemetry-collector:0.164.0-386
+# Keep the plain multi-arch tag: mk4's nodes are arm64. Dependabot once "bumped" this to 0.164.0-386 (a 32-bit x86
+# single-arch tag: "exec format error", CrashLoopBackOff, Helm upgrade timeout); close any PR adding an -<arch> suffix.
+image: otel/opentelemetry-collector:0.164.0

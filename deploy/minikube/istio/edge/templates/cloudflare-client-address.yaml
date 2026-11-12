@@ -1,0 +1,75 @@
+{{- if .Values.cloudflare.proxied }}
+# Cloudflare in front (values cloudflare.proxied): the PROXY protocol's address is then a Cloudflare edge, and the
+# visitor's own address is in CF-Connecting-IP. Two parts:
+#
+# 1. A request carrying CF-Connecting-IP from anywhere but Cloudflare's ranges is refused (403). source ipBlocks is the
+#    connection's own address, which the PROXY protocol sets and no header can change. So past this rule the header is
+#    always Cloudflare's.
+# 2. A Lua filter sets X-Forwarded-For and X-Real-IP (what the applications read: rate limits, Turnstile, logs) to
+#    CF-Connecting-IP when present, else to the connection's address. It replaces templates/forwarded-for.yaml, whose
+#    route-level header would run after it and put Cloudflare's address back.
+#
+# Gateway IP allowlists (remoteIpBlocks) still see Cloudflare's address, so the /postgres and /redis UI allowlists are
+# switched off while proxied (Terraform) and Cloudflare Access protects those paths instead. The TLS (TCP) hosts are not
+# proxied and keep their allowlists: the SNI condition keeps rule 1 off them (Istio drops a DENY rule's HTTP fields on
+# TCP, which would otherwise refuse every non-Cloudflare connection to PostgreSQL and Redis).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: cloudflare-forged-header
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  selector:
+    matchLabels: {{ toYaml .Values.selector | nindent 6 }}
+  action: DENY
+  rules:
+    - from:
+        - source:
+            notIpBlocks: {{ toYaml .Values.cloudflare.ipRanges | nindent 14 }}
+      when:
+        - key: request.headers[cf-connecting-ip]
+          values: ["*"]
+        - key: connection.sni
+          notValues: {{ include "edge.tlsSnis" . }}
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: cloudflare-client-address
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  workloadSelector:
+    labels: {{ toYaml .Values.selector | nindent 6 }}
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: cloudflare.client-address
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+            default_source_code:
+              inline_string: |
+                -- Runs after the authorization filters (inserted just before the router), so a CF-Connecting-IP
+                -- that reaches this point came from Cloudflare (cloudflare-forged-header).
+                function envoy_on_request(handle)
+                  local headers = handle:headers()
+                  local ip = headers:get("cf-connecting-ip")
+                  if ip == nil or ip == "" then
+                    -- "203.0.113.7:51234" or "[2001:db8::1]:51234": drop the port and the brackets.
+                    ip = handle:streamInfo():downstreamDirectRemoteAddress()
+                    ip = string.gsub(ip, ":%d+$", "")
+                    ip = string.gsub(ip, "^%[(.*)%]$", "%1")
+                  end
+                  headers:replace("x-forwarded-for", ip)
+                  headers:replace("x-real-ip", ip)
+                end
+{{- end }}

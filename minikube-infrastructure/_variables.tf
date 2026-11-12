@@ -125,3 +125,36 @@ variable "dockerhub_password" {
   default     = ""
   sensitive   = true
 }
+
+variable "postgres_backups" {
+  description = "Base backups and WAL archive of postgres-cluster to a private Cloudflare R2 bucket (postgres.tf). null = no backups. The keys are not here: scripts/postgres/backup-secret.sh puts them in Secret postgres-db/postgres-backup-r2, which must exist first."
+  type = object({
+    account_id = string                  # Cloudflare account ID (the R2 endpoint is https://<account_id>.r2.cloudflarestorage.com)
+    bucket     = string                  # a bucket used only for these backups
+    retention  = optional(string, "14d") # how far back a point-in-time restore can go
+  })
+  default = null
+  validation {
+    condition     = var.postgres_backups == null || can(regex("^[0-9a-f]{32}$", var.postgres_backups.account_id))
+    error_message = "account_id is the 32-character hex Cloudflare account ID."
+  }
+}
+
+variable "cloudflare_proxied" {
+  description = "true once DNS records jithendar.com and www are proxied by Cloudflare (orange cloud). The edge then takes the visitor address from CF-Connecting-IP (only from Cloudflare's ranges), and the /postgres and /redis IP allowlists are replaced by Cloudflare Access (they would only ever see Cloudflare's addresses). registry., jfrog., postgres. and redis. must stay DNS-only."
+  type        = bool
+  default     = false
+}
+
+variable "cloudflare_access" {
+  description = "Cloudflare Access in front of the admin tools on jithendar.com (istio/edge values cloudflare.access). The gateway refuses those paths without a valid Access token, so nobody can skip Access by connecting to the server's address directly. null = not enforced. Requires cloudflare_proxied."
+  type = object({
+    team_domain = string       # e.g. jithendar.cloudflareaccess.com (Zero Trust > Settings > Custom pages > Team domain)
+    audiences   = list(string) # each Access application's Application Audience (AUD) tag
+  })
+  default = null
+  validation {
+    condition     = var.cloudflare_access == null || (can(regex("^[a-z0-9-]+\\.cloudflareaccess\\.com$", var.cloudflare_access.team_domain)) && length(var.cloudflare_access.audiences) > 0)
+    error_message = "team_domain is <team>.cloudflareaccess.com and audiences lists at least one AUD tag."
+  }
+}

@@ -1,4 +1,4 @@
-# PostgreSQL on mk4: the CloudNativePG operator and ONE shared 3-instance cluster (primary + 2 replicas, one per node,
+# PostgreSQL on mk4: the CloudNativePG operator and ONE shared 2-instance cluster (primary + 1 replica, one per node,
 # local-path volumes) in namespace postgres-db for every application, plus its public access
 # (https://jithendar.com/postgres/ pgAdmin 4, psql at postgres.jithendar.com:443, both behind an IP allowlist).
 # README.md, "PostgreSQL".
@@ -114,6 +114,47 @@ resource "kubernetes_secret_v1" "postgres_app" {
   depends_on = [kubernetes_namespace_v1.harbor]
 }
 
+# The Barman Cloud plugin (CNPG-I): base backups and WAL archiving to object storage, as a sidecar in each instance
+# pod. Installed whether or not backups are on (it does nothing without an ObjectStore). Its webhook and gRPC
+# certificates come from cert-manager (a self-signed Issuer the chart creates in cnpg-system).
+resource "helm_release" "cnpg_barman_cloud" {
+  name       = "barman-cloud"
+  namespace  = "cnpg-system"
+  repository = "oci://ghcr.io/cloudnative-pg/charts"
+  chart      = "plugin-barman-cloud"
+  version    = "0.9.0"
+
+  wait    = true
+  timeout = var.helm_timeout
+
+  depends_on = [helm_release.cnpg_operator, helm_release.cert_manager]
+}
+
+# Backups (deploy/minikube/postgres/cluster.yaml, "backups"): on only when var.postgres_backups is set. The Secret holds
+# the R2 keys (ACCESS_KEY_ID, ACCESS_SECRET_KEY) and is made by scripts/postgres/backup-secret.sh, not here, so they are
+# not in a tfvars file or CI variable. The data source below only checks that the Secret is there (like istio.tf's
+# gateway logins, what it reads lands in the encrypted state). Check after an apply:
+#   kubectl -n postgres-db get backup,scheduledbackup
+#   kubectl -n postgres-db get cluster postgres-cluster -o jsonpath='{.status.conditions[?(@.type=="ContinuousArchiving")]}'
+data "kubernetes_secret_v1" "postgres_backup" {
+  count = var.postgres_backups == null ? 0 : 1
+  metadata {
+    name      = "postgres-backup-r2"
+    namespace = local.postgres_namespace
+  }
+}
+
+locals {
+  postgres_backup_values = var.postgres_backups == null ? {} : {
+    backups = {
+      enabled         = true
+      endpointURL     = "https://${var.postgres_backups.account_id}.r2.cloudflarestorage.com"
+      s3              = { bucket = var.postgres_backups.bucket, path = "/postgres-cluster" }
+      retentionPolicy = var.postgres_backups.retention
+    }
+  }
+}
+
 # The Cluster, its Pooler, PodDisruptionBudget, and one Database object per application. Helm only waits for the
 # objects to be accepted; the operator then runs initdb on the first instance and clones the replicas from it (a few
 # minutes on first install):
@@ -130,14 +171,24 @@ resource "helm_release" "postgres_cluster" {
   values = [
     file("${local.minikube}/postgres/cluster.yaml"),
     yamlencode(local.postgres_tenants),
+    yamlencode(local.postgres_backup_values),
   ]
 
   wait    = true
   timeout = var.helm_timeout
 
+  lifecycle {
+    # Archiving with no credentials fails every WAL segment, and PostgreSQL keeps them all on the node's disk until it
+    # fills (mk4's disk was full on 2026-11-08): never turn backups on before the Secret exists.
+    precondition {
+      condition     = var.postgres_backups == null || nonsensitive(contains(keys(try(data.kubernetes_secret_v1.postgres_backup[0].data, {})), "ACCESS_SECRET_KEY"))
+      error_message = "var.postgres_backups is set but Secret postgres-db/postgres-backup-r2 is missing: run scripts/postgres/backup-secret.sh first."
+    }
+  }
+
   # The operator's webhooks must answer before a Cluster can be created; the volumes need the local-path class; the
   # roles' Secrets should exist before the operator reconciles them.
-  depends_on = [helm_release.cnpg_operator, helm_release.local_path_provisioner, kubernetes_secret_v1.postgres_role]
+  depends_on = [helm_release.cnpg_operator, helm_release.cnpg_barman_cloud, helm_release.local_path_provisioner, kubernetes_secret_v1.postgres_role]
 }
 
 # pgAdmin's own login at https://jithendar.com/postgres/ (the chart's ui.adminSecret):
@@ -171,7 +222,7 @@ resource "helm_release" "postgres_access" {
   chart     = "${local.minikube}/postgres/access"
   values = [
     file("${local.minikube}/postgres/access/values.yaml"),
-    yamlencode({ allowedIps = var.postgres_allowed_ips }),
+    yamlencode({ allowedIps = var.postgres_allowed_ips, ui = { allowlist = var.cloudflare_access == null } }),
     local.chart_checksum["postgres/access"],
   ]
 

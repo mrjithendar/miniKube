@@ -196,21 +196,22 @@ jobs:
         run: |
           set -euo pipefail
           # Only this root's releases.
-          releases='^(metrics-server|cert-manager|letsencrypt-jithendar|istio-base|istio-cni|istiod|istio-ingressgateway|istio-edge|istio-mesh|kiali|prometheus|grafana-dashboards|grafana|loki|otel-collector|jaeger|local-path-provisioner|cnpg|postgres-cluster|postgres-access|argocd|harbor-access|harbor)$'
+          releases='^(metrics-server|cert-manager|letsencrypt-jithendar|istio-base|istio-cni|istiod|istio-ingressgateway|istio-edge|istio-mesh|kiali|prometheus|grafana-dashboards|grafana|loki|otel-collector|jaeger|local-path-provisioner|cnpg|barman-cloud|postgres-cluster|postgres-access|argocd|harbor-access|harbor)$'
           { echo '### Helm releases'; echo '```'; helm list -A --kube-context mk4 --filter "$releases"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          expected=23
+          expected=24
           deployed=$(helm list -A --kube-context mk4 --filter "$releases" --deployed -q | wc -l)
           [[ "$deployed" -eq "$expected" ]] || { echo "::error::$deployed of $expected releases deployed"; helm list -A --kube-context mk4 --filter "$releases"; exit 1; }
           # A freshly started pod (Kiali warms its caches) and a new route answer 503 for a while: retry for 3 min.
+          # Behind Cloudflare Access these answer 302 (to the Access login) or 403: the route is still up.
           for path in grafana/api/health prometheus/-/ready kiali/; do
             for attempt in $(seq 1 18); do
               code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://jithendar.com/$path" || true)
-              [[ "$code" =~ ^(200|302|401)$ ]] && break
+              [[ "$code" =~ ^(200|302|401|403)$ ]] && break
               echo "https://jithendar.com/$path -> $code (attempt $attempt of 18), retrying in 10 s"
               sleep 10
             done
             echo "https://jithendar.com/$path -> $code"
-            [[ "$code" =~ ^(200|302|401)$ ]] || { echo "::error::/$path answered $code for 3 minutes"; exit 1; }
+            [[ "$code" =~ ^(200|302|401|403)$ ]] || { echo "::error::/$path answered $code for 3 minutes"; exit 1; }
           done
 
       # The plan and the kubeconfig hold credentials; do not leave them on the runner.

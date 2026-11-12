@@ -90,7 +90,19 @@ resource "helm_release" "istio_edge" {
   namespace = "istio-ingress"
   chart     = "${local.minikube}/istio/edge"
 
-  values = [file("${local.minikube}/istio/edge/values.yaml"), local.chart_checksum["istio/edge"]]
+  values = [
+    file("${local.minikube}/istio/edge/values.yaml"),
+    # Cloudflare in front (values "cloudflare"): the visitor address from CF-Connecting-IP, and Access on the admin tools.
+    yamlencode({ cloudflare = {
+      proxied = var.cloudflare_proxied
+      access = {
+        enabled    = var.cloudflare_access != null
+        teamDomain = try(var.cloudflare_access.team_domain, "")
+        audiences  = try(var.cloudflare_access.audiences, [])
+      }
+    } }),
+    local.chart_checksum["istio/edge"],
+  ]
   set_sensitive = [for name in local.basic_auth_names : {
     name  = "basicAuthUsers.${name}"
     value = lookup(local.gateway_basic_auth, name, "")
@@ -105,6 +117,11 @@ resource "helm_release" "istio_edge" {
       condition = alltrue([for name in local.basic_auth_names :
       nonsensitive(lookup(local.gateway_basic_auth, name, "") != "")])
       error_message = "Secret istio-ingress/gateway-basic-auth lacks a login: run python3 scripts/istio/gateway-basic-auth.py first."
+    }
+    precondition {
+      # Without Cloudflare in front no request carries an Access token: every admin tool would answer 403.
+      condition     = var.cloudflare_access == null || var.cloudflare_proxied
+      error_message = "cloudflare_access needs cloudflare_proxied = true (proxy jithendar.com and www in Cloudflare DNS first)."
     }
   }
 

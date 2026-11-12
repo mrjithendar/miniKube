@@ -1,3 +1,4 @@
+{{- if .Values.ui.allowlist }}
 {{- include "redis.requireAllowlist" . }}
 # DENY policies on the Istio ingress gateway, which learns each visitor's address from the PROXY protocol (edge chart).
 # Same shape as postgres-access's. {{ .Values.ui.prefix }}: port 443 only (80 just redirects). The SNI condition keeps
@@ -23,3 +24,4 @@ spec:
       when:
         - key: connection.sni
           notValues: [{{ .Values.tcp.host | quote }}]
+{{- end }}

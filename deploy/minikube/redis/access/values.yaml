@@ -17,6 +17,9 @@ release: valkey
 clientNamespaces: []
 
 ui:
+  # The gateway IP allowlist on the UI path. Terraform turns it off once Cloudflare Access guards the path
+  # (var.cloudflare_access): behind Cloudflare the gateway only sees Cloudflare's addresses. The TCP host keeps its own.
+  allowlist: true
   # Path on jithendar.com; must match the edge routing table's entry (route "redis").
   prefix: /redis
   image: redis/redisinsight:3.8.0

@@ -177,7 +177,9 @@ resource "helm_release" "redis_access" {
   values = [
     file("${local.minikube}/redis/access/values.yaml"),
     yamlencode({
-      allowedIps       = var.redis_allowed_ips
+      allowedIps = var.redis_allowed_ips
+      # Cloudflare Access guards /redis instead once enforced (var.cloudflare_access); redis.jithendar.com keeps the list.
+      ui               = { allowlist = var.cloudflare_access == null }
       clientNamespaces = sort(distinct([for t in values(local.redis_tenants) : t.namespace]))
     }),
     local.chart_checksum["redis/access"],

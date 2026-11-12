@@ -124,3 +124,63 @@ overwriteForwardedFor: true
 addonRoutes:
   kiali: {namespace: istio-system, host: kiali, port: 20001}
   grafana: {namespace: monitoring, host: grafana, port: 80}
+
+# Cloudflare in front of jithendar.com and www (proxied DNS records). registry., jfrog., postgres. and redis. stay
+# DNS-only: they are not plain HTTPS (Harbor pushes exceed Cloudflare's 100 MB request limit; PostgreSQL and Redis are
+# TLS-wrapped TCP), and their IP allowlists need the visitor's own address. Both switches are set by Terraform
+# (var.cloudflare_proxied, var.cloudflare_access); off here.
+cloudflare:
+  # On (templates/cloudflare-client-address.yaml): the visitor's address is CF-Connecting-IP when the connection comes
+  # from Cloudflare, else the PROXY protocol's address, as before. A request that carries CF-Connecting-IP from
+  # anywhere else is refused, so the header cannot be forged by connecting to the server directly.
+  proxied: false
+  # https://www.cloudflare.com/ips-v4 and /ips-v6, checked 2026-11-12. Cloudflare announces changes well ahead.
+  ipRanges:
+    - 173.245.48.0/20
+    - 103.21.244.0/22
+    - 103.22.200.0/22
+    - 103.31.4.0/22
+    - 141.101.64.0/18
+    - 108.162.192.0/18
+    - 190.93.240.0/20
+    - 188.114.96.0/20
+    - 197.234.240.0/22
+    - 198.41.128.0/17
+    - 162.158.0.0/15
+    - 104.16.0.0/13
+    - 104.24.0.0/14
+    - 172.64.0.0/13
+    - 131.0.72.0/22
+    - 2400:cb00::/32
+    - 2606:4700::/32
+    - 2803:f800::/32
+    - 2405:b500::/32
+    - 2405:8100::/32
+    - 2a06:98c0::/29
+    - 2c0f:f248::/32
+  # Cloudflare Access (Zero Trust) in front of the admin tools (templates/cloudflare-access.yaml). Cloudflare asks for
+  # the login; the gateway then refuses these paths unless the request carries a valid Access token for one of
+  # `audiences`, so going around Cloudflare (straight to the server's address) gets a 403, not a login page.
+  access:
+    enabled: false
+    # <team>.cloudflareaccess.com: the token's issuer, and where its signing keys are published.
+    teamDomain: ""
+    # The Application Audience (AUD) tag of each Access application that covers these paths.
+    audiences: []
+    # Path prefixes behind Access (each also matches prefix/*). Machine endpoints with their own gateway login are in
+    # `except`; CI reaches the others with an Access service token (CF-Access-Client-Id / -Secret headers).
+    prefixes:
+      - /argocd
+      - /kiali
+      - /grafana
+      - /prometheus
+      - /loki
+      - /opensearch-dashboards
+      - /opensearch
+      - /postgres
+      - /redis
+      - /ui
+      - /v1
+    except:
+      - /prometheus/api/v1/write
+      - /loki/api/v1/push

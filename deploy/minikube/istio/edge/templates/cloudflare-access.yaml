@@ -1,0 +1,53 @@
+{{- with .Values.cloudflare.access }}{{ if .enabled }}
+{{- if not $.Values.cloudflare.proxied }}{{ fail "cloudflare.access.enabled needs cloudflare.proxied: without Cloudflare in front no request carries an Access token, and every admin tool would answer 403" }}{{ end }}
+{{- $team := required "cloudflare.access.teamDomain is required (<team>.cloudflareaccess.com)" .teamDomain }}
+{{- if empty .audiences }}{{ fail "cloudflare.access.audiences is empty: add each Access application's AUD tag" }}{{ end }}
+{{- $paths := list }}{{ range .prefixes }}{{ $paths = append $paths . }}{{ $paths = append $paths (printf "%s/*" .) }}{{ end }}
+{{- $except := list }}{{ range .except }}{{ $except = append $except . }}{{ $except = append $except (printf "%s/*" .) }}{{ end }}
+# Cloudflare Access in front of the admin tools (values cloudflare.access). Cloudflare runs the login and adds a signed
+# token (Cf-Access-Jwt-Assertion) to every request it lets through, browsers and service tokens alike. The gateway
+# checks it here, so the tools are not reachable by going around Cloudflare: straight to the server's address, or with
+# a Host header of jithendar.com from anywhere.
+#
+# Only the Cf-Access-Jwt-Assertion header is read: Authorization stays the applications' own (Argo CD API tokens,
+# basic auth). An invalid or expired token is answered 401; a missing one, on these paths, 403.
+apiVersion: security.istio.io/v1
+kind: RequestAuthentication
+metadata:
+  name: cloudflare-access
+  namespace: {{ $.Release.Namespace | quote }}
+spec:
+  selector:
+    matchLabels: {{ toYaml $.Values.selector | nindent 6 }}
+  jwtRules:
+    - issuer: {{ printf "https://%s" $team | quote }}
+      jwksUri: {{ printf "https://%s/cdn-cgi/access/certs" $team | quote }}
+      audiences: {{ toYaml .audiences | nindent 8 }}
+      fromHeaders:
+        - name: cf-access-jwt-assertion
+      forwardOriginalToken: true
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: cloudflare-access
+  namespace: {{ $.Release.Namespace | quote }}
+spec:
+  selector:
+    matchLabels: {{ toYaml $.Values.selector | nindent 6 }}
+  action: DENY
+  rules:
+    - from:
+        - source:
+            notRequestPrincipals: [{{ printf "https://%s/*" $team | quote }}]
+      to:
+        - operation:
+            paths: {{ toJson $paths }}
+            {{- with $except }}
+            notPaths: {{ toJson . }}
+            {{- end }}
+      when:
+        # Keeps this HTTP rule off the TLS (TCP) hosts (see templates/_helpers.tpl).
+        - key: connection.sni
+          notValues: {{ include "edge.tlsSnis" $ }}
+{{- end }}{{ end }}

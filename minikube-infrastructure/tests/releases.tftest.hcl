@@ -98,6 +98,8 @@ run "postgres_releases" {
   assert {
     condition = (
       helm_release.cnpg_operator.version == "0.29.1" &&
+      helm_release.cnpg_barman_cloud.version == "0.9.0" &&
+      helm_release.cnpg_barman_cloud.namespace == helm_release.cnpg_operator.namespace &&
       helm_release.postgres_cluster.version == "0.9.0" &&
       helm_release.cnpg_operator.namespace == "cnpg-system" &&
       helm_release.postgres_cluster.namespace == "postgres-db" &&

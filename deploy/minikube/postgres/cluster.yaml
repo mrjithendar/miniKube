@@ -1,8 +1,8 @@
 # PostgreSQL cluster "postgres-cluster" in namespace postgres-db (chart cnpg/cluster). Terraform: postgres.tf.
 #
-# The one PostgreSQL for every application on mk4 (replacing each application's own pod). One primary and two
-# streaming replicas, each on its own node (required anti-affinity) with a local-path volume pinned to that node. The
-# operator fails over to a replica if the primary's pod or node goes. Services:
+# The one PostgreSQL for every application on mk4 (replacing each application's own pod). One primary and one
+# streaming replica, each on its own node (required anti-affinity) with a local-path volume pinned to that node. The
+# operator fails over to the replica if the primary's pod or node goes. Services:
 #   postgres-cluster-pooler-rw.postgres-db.svc:5432   PgBouncer in front of the primary: what applications use
 #   postgres-cluster-rw.postgres-db.svc:5432          primary (reads and writes)
 #   postgres-cluster-ro.postgres-db.svc:5432          replicas only
@@ -18,12 +18,13 @@ version:
 mode: standalone
 
 cluster:
-  # One instance on the k3s mk4 (two workers, budget): no replica, so no automatic failover. Back to 3 needs a third
-  # worker (podAntiAffinityType required: one instance per node).
-  instances: 1
+  # Primary + one replica on another worker (mk4 has three since 2026-11-11; podAntiAffinityType required: one
+  # instance per node), so losing a node fails over instead of taking every application's database down. A third
+  # instance needs memory on worker1/worker2, which are ~98% requested.
+  instances: 2
   imagePullPolicy: Always
   storage:
-    # Every application's data, three times (one copy per instance). On 2026-11-09 the four application databases
+    # Every application's data, once per instance. On 2026-11-09 the four application databases
     # together were about 0.4G. local-path does not enforce the size: all volumes share mk4's one disk (full on
     # 2026-11-08), so watch `df` on the host rather than this number.
     size: 10Gi
@@ -42,7 +43,8 @@ cluster:
   primaryUpdateStrategy: unsupervised
   primaryUpdateMethod: switchover
   enableSuperuserAccess: true
-  # A PDB on a single instance would block every node drain (k3s upgrades included).
+  # The operator's primary PDB blocks draining the primary's node until someone runs a switchover, which would stall
+  # k3s upgrades (system-upgrade-controller drains). Failover covers an unplanned loss; drains just fail over too.
   enablePDB: false
   initdb:
     database: app
@@ -98,7 +100,44 @@ poolers:
               limits:
                 memory: 256Mi
 
-# No object store on mk4 yet: no base backups, no WAL archive. Replicas are not backups, and with every application
-# here this is the one gap to close before moving them (README.md, PostgreSQL).
+# Base backups and the WAL archive in a private Cloudflare R2 bucket (point-in-time restore inside the retention window).
+# Off here; Terraform turns it on and fills in the endpoint and bucket when var.postgres_backups is set (postgres.tf),
+# and refuses to unless the credentials Secret exists (scripts/postgres/backup-secret.sh). A replica is not a backup.
 backups:
   enabled: false
+  # Through the Barman Cloud plugin (release barman-cloud, postgres.tf): the operator's built-in barmanObjectStore is
+  # removed in CloudNativePG 1.31. The chart renders the plugin's ObjectStore postgres-cluster-backups from this block.
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  objectStore:
+    create: true
+    # Terraform's helm_release applies hooks like any other object, before the Cluster that needs it.
+    helmHook: true
+  # The replica takes the base backups, so the primary does not pay for them.
+  target: prefer-standby
+  provider: s3
+  s3:
+    path: /postgres-cluster
+  secret:
+    # Created by scripts/postgres/backup-secret.sh, never by this chart: the keys stay out of Helm and Terraform state.
+    create: false
+    name: postgres-backup-r2
+  wal:
+    compression: gzip
+    # R2 encrypts every object at rest and does not take the SSE-S3 header (AES256), which barman would send.
+    encryption: ""
+    maxParallel: 2
+  data:
+    compression: gzip
+    encryption: ""
+    jobs: 2
+  scheduledBackups:
+    - name: daily
+      # Six-field cron (seconds first): 02:00 UTC, 07:30 in India, the quietest hour.
+      schedule: "0 0 2 * * *"
+      backupOwnerReference: self
+      method: plugin
+      pluginConfiguration:
+        name: barman-cloud.cloudnative-pg.io
+  retentionPolicy: "14d"

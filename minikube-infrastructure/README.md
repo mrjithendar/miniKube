@@ -251,7 +251,7 @@ gateway's wildcard certificate (`istio-ingress/jithendar-com`, edge chart) uses 
 ## Commands
 
 From the repository root, with AWS credentials for the state bucket and a kubeconfig that has the `mk4` context.
-State: `s3://jithendardharmapuri/terraform/minikube-mk4.tfstate` (same bucket as the tools repository's `infrastructure/`, own key). The
+State: `s3://jithendardharmapuri/terraform/k3s-mk4.tfstate` (same bucket as the tools repository's `infrastructure/`, own key). The
 jithendar.com repository must be checked out beside this one (or set `jithendar_com_dir`).
 
 ```bash
@@ -280,8 +280,8 @@ The deploy job runs only when repository variable `MINIKUBE_TERRAFORM_APPLY` is 
 
 - **mk4:** ServiceAccount `kube-system/github-minikube-terraform` (`ci/github-terraform-serviceaccount.yaml`), bound to
   `cluster-admin` (CRDs, ClusterRoles and webhooks need it). Its token is a secret of the environment `mk4`, which only
-  `master` can deploy to, so pull request jobs never see it. API endpoint `MK4_API_SERVER` (`https://jithendar.com:32771`,
-  the one jithendar.com's CI uses). Revoke: `kubectl --context mk4 -n kube-system delete secret github-minikube-terraform-token`.
+  `master` can deploy to, so pull request jobs never see it. API endpoint `MK4_API_SERVER`: the k3s API of the
+  Hetzner master (`server:` of context `mk4`, port 6443); the old Minikube `https://jithendar.com:32771` is gone. Revoke: `kubectl --context mk4 -n kube-system delete secret github-minikube-terraform-token`.
 - **State:** AWS role `github-tools-minikube-terraform` through GitHub OIDC, only for
   `repo:mrjithendar/miniKube:environment:mk4`, only the state object and its `.tflock`
   (tools repository: `infrastructure/github-minikube-terraform.tf`). No AWS key is stored. The role name keeps its

@@ -122,6 +122,10 @@ jobs:
           (umask 077; perl -pe 's/\$\{(MK4_[A-Z_]+)\}/$ENV{$1}/g' .github/mk4-terraform-kubeconfig.yaml > "$RUNNER_TEMP/kubeconfig")
           echo "TF_VAR_kubeconfig_path=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
           echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+          # Fail here, not mid-plan: the later kubectl checks hide errors, so an old MK4_API_SERVER (e.g. the deleted
+          # Minikube's jithendar.com:32771) only surfaced as "connection refused" inside terraform apply.
+          KUBECONFIG="$RUNNER_TEMP/kubeconfig" kubectl --request-timeout=20s get --raw /version >/dev/null \
+            || { echo "::error::mk4 API $MK4_API_SERVER unreachable or rejected the token; re-run scripts/setup-minikube-terraform-ci.sh against the current cluster"; exit 1; }
 
       # The DNS-01 issuers need it; without it the wildcard Certificate never becomes Ready (README.md).
       - name: Check prerequisites on mk4

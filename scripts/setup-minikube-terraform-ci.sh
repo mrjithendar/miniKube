@@ -35,7 +35,7 @@ MK4_CA_DATA="$(kubectl config view --raw --minify --context "$CONTEXT" -o jsonpa
 [[ -n "$MK4_CA_DATA" ]] || MK4_CA_DATA="$(base64 < "$(kubectl config view --raw --minify --context "$CONTEXT" -o jsonpath='{.clusters[0].cluster.certificate-authority}')" | tr -d '\n')"
 [[ -n "$MK4_API_SERVER" && -n "$MK4_CA_DATA" ]] || { echo "Could not read server/CA of context $CONTEXT." >&2; exit 1; }
 case "$MK4_API_SERVER" in
-  *127.0.0.1*|*localhost*|*192.168.*) echo "Context $CONTEXT points at $MK4_API_SERVER, which GitHub's runners cannot reach. Use the public endpoint (jithendar.com uses https://jithendar.com:32771)." >&2; exit 1 ;;
+  *127.0.0.1*|*localhost*|*192.168.*) echo "Context $CONTEXT points at $MK4_API_SERVER, which GitHub's runners cannot reach. Use the public k3s API of the Hetzner master (https://<master IP>:6443)." >&2; exit 1 ;;
 esac
 
 echo "→ Cluster $MK4_API_SERVER, ServiceAccount $NS/$SA, repository $REPO"

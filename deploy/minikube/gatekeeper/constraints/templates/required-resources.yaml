@@ -1,0 +1,3 @@
+{{- include "constraints.header" (dict "root" . "kind" "K8sRequiredResources" "name" "require-memory-limits" "key" "requiredResources" "c" .Values.requiredResources) }}
+  parameters:
+    limits: {{ .Values.requiredResources.limits | toJson }}

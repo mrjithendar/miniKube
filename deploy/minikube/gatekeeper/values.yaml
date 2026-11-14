@@ -1,0 +1,34 @@
+# Installed by minikube-infrastructure/gatekeeper.tf (release gatekeeper, namespace gatekeeper-system), chart
+# open-policy-agent gatekeeper 3.23.1. Policies: gatekeeper/library (ConstraintTemplates) and
+# gatekeeper/constraints (what is enforced where), README.md.
+
+# Two webhook replicas instead of three: the workers' memory is about 80% requested (2026-11-14).
+replicas: 2
+
+# Validation only. Nothing here mutates objects, so the mutating webhook is not installed.
+disableMutation: true
+
+# The webhook fails open: when Gatekeeper is down, the API server admits what the webhook would check (audit reports it
+# later), so a broken Gatekeeper cannot block deployments. Templates with CEL code are enforced by the API server
+# itself instead, through ValidatingAdmissionPolicies Gatekeeper generates (README.md).
+validatingWebhookFailurePolicy: Ignore
+validatingWebhookTimeoutSeconds: 3
+
+# Audit every 5 minutes, keeping up to 50 violations per constraint in its status
+# (kubectl get constraints, README.md).
+auditInterval: 300
+constraintViolationsLimit: 50
+# Log every refused request, so a denied deployment can be explained from the controller's logs.
+logDenies: true
+
+# Which namespaces each policy skips is set per constraint (gatekeeper/constraints/values.yaml). The chart labels
+# gatekeeper-system admission.gatekeeper.sh/ignore, so the webhook never evaluates its own namespace.
+controllerManager:
+  resources:
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 512Mi}
+
+audit:
+  resources:
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 512Mi}

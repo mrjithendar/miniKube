@@ -1,0 +1,4 @@
+# Installed by minikube-infrastructure/gatekeeper.tf (release gatekeeper-library, namespace gatekeeper-system).
+# No settings: each template in templates/ renders one file from library/ verbatim (they hold Rego, which Helm must
+# not parse). The files are upstream's template.yaml, unchanged (../README.md, "Updating the library").
+{}

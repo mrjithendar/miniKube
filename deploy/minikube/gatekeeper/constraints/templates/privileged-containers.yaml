@@ -1,0 +1,1 @@
+{{- include "constraints.header" (dict "root" . "kind" "K8sPSPPrivilegedContainer" "name" "disallow-privileged-containers" "key" "privilegedContainers" "c" .Values.privilegedContainers) }}

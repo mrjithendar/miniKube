@@ -9,6 +9,7 @@ on:
       - 'minikube-infrastructure/**'
       - 'deploy/minikube/cert-manager/**'
       - 'deploy/minikube/metrics-server/values.yaml'
+      - 'deploy/minikube/gatekeeper/**'
       - 'deploy/minikube/istio/**'
       - 'deploy/minikube/observability/**'
       - 'deploy/minikube/storage/**'
@@ -77,7 +78,7 @@ jobs:
           { echo 'basicAuthUsers:'; for n in $names; do echo "  $n: \"ci:{SHA}AAAAAAAAAAAAAAAAAAAAAAAAAAA=\""; done; } > "$RUNNER_TEMP/edge-ci.yaml"
           helm lint deploy/minikube/istio/edge -f "$RUNNER_TEMP/edge-ci.yaml"
           helm template check deploy/minikube/istio/edge -f "$RUNNER_TEMP/edge-ci.yaml" > /dev/null
-          for chart in cert-manager/issuers harbor/access observability/prometheus observability/loki observability/jaeger \
+          for chart in cert-manager/issuers gatekeeper/library gatekeeper/constraints harbor/access observability/prometheus observability/loki observability/jaeger \
                        observability/otel-collector observability/grafana/dashboards; do
             helm lint "deploy/minikube/$chart"
             helm template check "deploy/minikube/$chart" > /dev/null

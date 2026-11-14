@@ -6,7 +6,7 @@ locals {
   # version and values, so without it a template edit under an unchanged Chart.yaml version plans "No changes"
   # (the /prometheus and /loki VirtualServices never reached mk4, 2026-11-09). The charts ignore the value.
   local_charts = [
-    "cert-manager/issuers", "harbor/access", "istio/edge", "istio/mesh", "observability/grafana/dashboards", "observability/jaeger",
+    "cert-manager/issuers", "gatekeeper/constraints", "gatekeeper/library", "harbor/access", "istio/edge", "istio/mesh", "observability/grafana/dashboards", "observability/jaeger",
     "observability/loki", "observability/otel-collector", "observability/prometheus", "postgres/access",
     "redis/access", "storage/local-path-provisioner",
   ]

@@ -38,7 +38,7 @@ def test_each_local_chart_template_renders_at_most_one_resource():
     # The edge chart refuses to render without its logins: give it placeholders.
     logins=[l['name'] for l in yaml.safe_load((ROOT/'deploy/minikube/istio/edge/values.yaml').read_text())['basicAuth']]
     users=['--set-json','basicAuthUsers='+json.dumps({n:'user:{SHA}'+'A'*27+'=' for n in logins}),]
-    for chart in ('deploy/minikube/cert-manager/issuers','deploy/minikube/istio/edge','deploy/minikube/istio/mesh','deploy/minikube/postgres/access',*(f'deploy/minikube/observability/{c}' for c in charts)):
+    for chart in ('deploy/minikube/cert-manager/issuers','deploy/minikube/gatekeeper/library','deploy/minikube/gatekeeper/constraints','deploy/minikube/istio/edge','deploy/minikube/istio/mesh','deploy/minikube/postgres/access',*(f'deploy/minikube/observability/{c}' for c in charts)):
         extra=users if chart.endswith('istio/edge') else []
         # The access chart refuses to render without an allowlist.
         if chart.endswith('postgres/access'):extra=['--set','allowedIps[0]=192.0.2.1/32']

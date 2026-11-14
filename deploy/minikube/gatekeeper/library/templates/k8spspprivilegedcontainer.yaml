@@ -1,0 +1,1 @@
+{{ .Files.Get "library/privileged-containers.yaml" }}

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: gatekeeper-library
+version: 0.1.0
+type: application
+description: Gatekeeper ConstraintTemplates vendored unchanged from open-policy-agent/gatekeeper-library

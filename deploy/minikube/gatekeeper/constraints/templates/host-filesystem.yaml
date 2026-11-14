@@ -1,0 +1,3 @@
+{{- include "constraints.header" (dict "root" . "kind" "K8sPSPHostFilesystem" "name" "disallow-hostpath-volumes" "key" "hostFilesystem" "c" .Values.hostFilesystem) }}
+  parameters:
+    allowedHostPaths: []

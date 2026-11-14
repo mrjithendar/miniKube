@@ -1,0 +1,3 @@
+{{- include "constraints.header" (dict "root" . "kind" "K8sDisallowedTags" "name" "disallow-latest-image-tag" "key" "disallowedTags" "c" .Values.disallowedTags) }}
+  parameters:
+    tags: {{ .Values.disallowedTags.tags | toJson }}

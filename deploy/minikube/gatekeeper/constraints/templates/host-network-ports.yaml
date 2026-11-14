@@ -1,0 +1,4 @@
+{{- include "constraints.header" (dict "root" . "kind" "K8sPSPHostNetworkingPorts" "name" "disallow-host-network-and-ports" "key" "hostNetworkPorts" "c" .Values.hostNetworkPorts) }}
+  parameters:
+    hostNetwork: false
+    max: 0

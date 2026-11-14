@@ -1,0 +1,5 @@
+apiVersion: v2
+name: gatekeeper-constraints
+version: 0.1.0
+type: application
+description: Gatekeeper constraints on mk4 (kinds from the gatekeeper-library chart)

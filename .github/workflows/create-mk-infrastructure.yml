@@ -1,7 +1,7 @@
 name: Create minikube infrastructure
 
 # Applies minikube-infrastructure/ (Helm releases on mk4: metrics-server, cert-manager, Let's Encrypt, Istio (+ CNI, ingress gateway), Kiali,
-# Prometheus, Grafana, Loki, OpenTelemetry Collector, Jaeger, local-path storage, CloudNativePG + PostgreSQL) on pushes to master, or by hand with "plan only" to see
+# Prometheus, Grafana, Loki, OpenTelemetry Collector, Jaeger, local-path storage, CloudNativePG + PostgreSQL, OPA Gatekeeper) on pushes to master, or by hand with "plan only" to see
 # drift. Pull requests are checked by check-mk-infrastructure.yml.
 # Off until repository variable MINIKUBE_TERRAFORM_APPLY is "true": set it after the one-time move of the live add-ons
 # off Argo CD (minikube-infrastructure/README.md), never before.
@@ -25,6 +25,7 @@ on:
       - 'minikube-infrastructure/**'
       - 'deploy/minikube/cert-manager/**'
       - 'deploy/minikube/metrics-server/values.yaml'
+      - 'deploy/minikube/gatekeeper/**'
       - 'deploy/minikube/istio/**'
       - 'deploy/minikube/observability/**'
       - 'deploy/minikube/storage/**'
@@ -202,9 +203,9 @@ jobs:
         run: |
           set -euo pipefail
           # Only this root's releases.
-          releases='^(metrics-server|cert-manager|letsencrypt-jithendar|istio-base|istio-cni|istiod|istio-ingressgateway|istio-edge|istio-mesh|kiali|prometheus|grafana-dashboards|grafana|loki|otel-collector|jaeger|local-path-provisioner|cnpg|barman-cloud|postgres-cluster|postgres-access|argocd|harbor-access|harbor)$'
+          releases='^(metrics-server|cert-manager|letsencrypt-jithendar|istio-base|istio-cni|istiod|istio-ingressgateway|istio-edge|istio-mesh|kiali|prometheus|grafana-dashboards|grafana|loki|otel-collector|jaeger|local-path-provisioner|cnpg|barman-cloud|postgres-cluster|postgres-access|argocd|harbor-access|harbor|gatekeeper|gatekeeper-library|gatekeeper-constraints)$'
           { echo '### Helm releases'; echo '```'; helm list -A --kube-context mk4 --filter "$releases"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          expected=24
+          expected=27
           deployed=$(helm list -A --kube-context mk4 --filter "$releases" --deployed -q | wc -l)
           [[ "$deployed" -eq "$expected" ]] || { echo "::error::$deployed of $expected releases deployed"; helm list -A --kube-context mk4 --filter "$releases"; exit 1; }
           # A freshly started pod (Kiali warms its caches) and a new route answer 503 for a while: retry for 3 min.

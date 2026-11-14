@@ -16,6 +16,11 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.7"
     }
+    # Only for the pause between the Gatekeeper templates and their constraints (gatekeeper.tf).
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.13"
+    }
   }
 
   backend "s3" {

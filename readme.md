@@ -1,7 +1,7 @@
 # miniKube
 
 Everything for the self-hosted Minikube cluster `mk4`: creating the cluster, Traefik and Argo CD, the Terraform-managed
-add-ons (cert-manager, Let's Encrypt, Istio, Kiali, Prometheus, Grafana, Loki, OpenTelemetry Collector, Jaeger), the
+add-ons (cert-manager, Let's Encrypt, Istio, Kiali, Prometheus, Grafana, Loki, OpenTelemetry Collector, Jaeger, OPA Gatekeeper), the
 mk4 Argo CD catalog (AppProject `mk-platform`, opt-in Harbor), and their workflows, scripts and tests.
 
 Moved here from [mrjithendar/tools](https://github.com/mrjithendar/tools) on 2026-11-08 with the same paths, so
@@ -48,7 +48,7 @@ Less common operations in `deploy/minikube/`:
 
 | Path | Contents |
 |---|---|
-| `deploy/minikube/` | Cluster scripts and per-component config: [argocd](deploy/minikube/argocd/README.md), [cert-manager](deploy/minikube/cert-manager/README.md), [traefik](deploy/minikube/traefik/README.md), [vault](deploy/minikube/vault/README.md), [jfrog](deploy/minikube/jfrog/README.md), [harbor](deploy/minikube/harbor/README.md), [metrics-server](deploy/minikube/metrics-server/README.md), [ecr-refresh](deploy/minikube/ecr-refresh/README.md), `namespaces/`, the [Argo CD catalog](deploy/minikube/applications/README.md) and [observability](deploy/minikube/observability/README.md). [Commands](deploy/minikube/README.md). |
+| `deploy/minikube/` | Cluster scripts and per-component config: [argocd](deploy/minikube/argocd/README.md), [cert-manager](deploy/minikube/cert-manager/README.md), [traefik](deploy/minikube/traefik/README.md), [vault](deploy/minikube/vault/README.md), [jfrog](deploy/minikube/jfrog/README.md), [harbor](deploy/minikube/harbor/README.md), [metrics-server](deploy/minikube/metrics-server/README.md), [gatekeeper](deploy/minikube/gatekeeper/README.md), [gatekeeper](deploy/minikube/gatekeeper/README.md), [ecr-refresh](deploy/minikube/ecr-refresh/README.md), `namespaces/`, the [Argo CD catalog](deploy/minikube/applications/README.md) and [observability](deploy/minikube/observability/README.md). [Commands](deploy/minikube/README.md). |
 | `minikube-infrastructure/` | Terraform root for Traefik and the add-ons, one `helm_release` per file ([details](minikube-infrastructure/README.md)). |
 | `scripts/argocd/` | `bootstrap.py`, `deploy.py`, and `validate.py` (renders the whole catalog and checks ownership). |
 | `scripts/setup/` | `create_secrets.py` and [SECRETS.md](scripts/setup/SECRETS.md). |

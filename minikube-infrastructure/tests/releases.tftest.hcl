@@ -18,6 +18,7 @@ mock_provider "kubernetes" {
   }
 }
 mock_provider "random" {}
+mock_provider "time" {}
 
 # Every run: the access charts refuse to plan without an allowlist (runs below override these to test that).
 variables {
@@ -345,4 +346,23 @@ run "harbor_without_docker_hub_login_fails" {
   }
 
   expect_failures = [kubernetes_secret_v1.harbor_dockerhub_pull]
+}
+
+run "gatekeeper_releases" {
+  command = plan
+
+  assert {
+    condition = (
+      helm_release.gatekeeper.version == "3.23.1" &&
+      helm_release.gatekeeper.namespace == "gatekeeper-system" &&
+      helm_release.gatekeeper_library.namespace == "gatekeeper-system" &&
+      helm_release.gatekeeper_constraints.namespace == "gatekeeper-system"
+    )
+    error_message = "Gatekeeper is pinned and its releases live in gatekeeper-system."
+  }
+
+  assert {
+    condition     = time_sleep.gatekeeper_constraint_kinds.create_duration == "30s"
+    error_message = "Constraints wait for Gatekeeper to create their kinds after the templates."
+  }
 }

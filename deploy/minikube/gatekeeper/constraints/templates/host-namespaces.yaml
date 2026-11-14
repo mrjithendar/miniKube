@@ -1,0 +1,1 @@
+{{- include "constraints.header" (dict "root" . "kind" "K8sPSPHostNamespace" "name" "disallow-host-namespaces" "key" "hostNamespaces" "c" .Values.hostNamespaces) }}

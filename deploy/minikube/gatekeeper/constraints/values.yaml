@@ -1,0 +1,44 @@
+# Installed by minikube-infrastructure/gatekeeper.tf (release gatekeeper-constraints, after gatekeeper-library has
+# created the constraint kinds). One constraint per template in templates/, all matching Pods (so Deployments,
+# StatefulSets, Jobs and CronJobs are refused or reported when their Pods are created, and audit reports running Pods).
+#
+# enforcementAction: deny (refuse the request), warn (admit it, kubectl and Argo CD show a warning) or dryrun (admit
+# it silently; audit reports it). Choices from a scan of every running Pod on 2026-11-14 (../README.md, "Policies"):
+# the four pod-security policies have no violations outside the excluded namespaces, so they deny; the image tag and
+# memory limit policies would refuse running applications, so they warn until those are fixed.
+
+# Skipped by every constraint: the cluster's own components (k3s svclb, CoreDNS, hcloud CSI and cloud controller run
+# privileged, on the host network or with hostPath volumes) and Gatekeeper itself.
+excludedNamespaces: [kube-system, gatekeeper-system]
+
+privilegedContainers:
+  enforcementAction: deny
+  excludedNamespaces: []
+
+hostNamespaces:
+  # hostPID and hostIPC.
+  enforcementAction: deny
+  excludedNamespaces: []
+
+hostNetworkPorts:
+  # hostNetwork and every hostPort (max 0).
+  enforcementAction: deny
+  excludedNamespaces: []
+
+hostFilesystem:
+  # hostPath volumes. istio-cni installs its plugin on each node, the k3s system-upgrade jobs replace the k3s binary,
+  # and local-path-provisioner's helper Pods create the volume directories on the node.
+  enforcementAction: deny
+  excludedNamespaces: [istio-system, system-upgrade, local-path-storage]
+
+disallowedTags:
+  # Images must name a tag other than latest. jithendar, moks and roboshop-ai deploy :latest today.
+  enforcementAction: warn
+  excludedNamespaces: []
+  tags: [latest]
+
+requiredResources:
+  # Every container sets a memory limit. argocd, cnpg-system, istio-system and system-upgrade have containers without one.
+  enforcementAction: warn
+  excludedNamespaces: []
+  limits: [memory]
